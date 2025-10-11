@@ -27,6 +27,7 @@ actor_rollout_ref:
     lora_alpha: ${lora.alpha}
     target_modules: ${lora.target_modules}
   actor:
+    _target_: verl.workers.config.FSDPActorConfig
     ppo_mini_batch_size: ${ppo_mini_batch_size}  # by default, ppo_mini_batch_size = train_batch_size / 4
     micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
     ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
@@ -98,7 +99,6 @@ trainer:
   n_gpus_per_node: 1
   test_freq: 10
   generations_to_log_to_wandb: 
-    train: 128 # TODO: will be implemented
     val: 20
   logger: [ 'console', 'wandb' ]
 

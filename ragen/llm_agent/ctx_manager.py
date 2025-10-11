@@ -64,8 +64,8 @@ def get_masks_and_scores(input_ids: torch.Tensor, tokenizer: AutoTokenizer, all_
         scores = [sum(i) for i in all_scores]
         score_tensor[:, -1] = torch.tensor(scores, dtype=torch.float32)
     score_tensor = score_tensor[:, 1:] # remove the first token
-    loss_mask = loss_mask[:, :-1] # remove the last token
-    response_mask = response_mask[:, :-1] # remove the last token
+    loss_mask = loss_mask[:, :-1].float() # remove the last token
+    response_mask = response_mask[:, :-1].float() # remove the last token
 
     return score_tensor, loss_mask, response_mask
 

@@ -44,13 +44,16 @@ class VllmWrapperWg: # Thi is a developing class for eval and test
 			# min_p=0.1,
 		)
 
-	def generate_sequences(self, lm_inputs: DataProto):
+	def generate_sequences(self, lm_inputs: DataProto, mode: str = "singleturn", skip_generation: bool = False):
 		"""
 		Convert the input ids to text, and then generate the sequences. Finally create a dataproto. 
 		This aligns with the verl Worker Group interface.
 		"""
 		# NOTE: free_cache_engine is not used in the vllm wrapper. Only used in the verl vllm.
 		# cache_action = lm_inputs.meta_info.get('cache_action', None)
+
+		if skip_generation:
+			return lm_inputs
 
 		input_ids = lm_inputs.batch['input_ids']
 		input_texts = self.tokenizer.batch_decode(input_ids, skip_special_tokens=False)
@@ -87,11 +90,14 @@ class ApiCallingWrapperWg:
         print(f'API-based LLM ({model_info.provider_name} - {model_info.model_name}) initialized')
 
 
-    def generate_sequences(self, lm_inputs: DataProto) -> DataProto:
+    def generate_sequences(self, lm_inputs: DataProto, mode: str = "singleturn", skip_generation: bool = False) -> DataProto:
         """
         Convert the input ids to text, make API calls to generate responses, 
         and create a DataProto with the results.
         """
+
+        if skip_generation:
+            return lm_inputs
 
         messages_list = lm_inputs.non_tensor_batch['messages_list'].tolist()
         results, failed_messages = self.llm.run_batch(
@@ -124,17 +130,23 @@ class LLMAgentProxy:
 		self.val_es_manager = EnvStateManager(config, mode="val")
 		self.actor_wg = actor_rollout_wg
 		self.tokenizer = tokenizer
+		self._last_padded_inputs = None
 
-	def generate_sequences(self, lm_inputs: DataProto):
+	def generate_sequences(self, lm_inputs: DataProto, mode: str = "singleturn", skip_generation: bool = False):
 		# TODO: add kv cache both for the vllm wrapper here and for verl vllm.
 		if isinstance(self.actor_wg, RayWorkerGroup):
 			padded_lm_inputs, pad_size = pad_dataproto_to_divisor(lm_inputs, self.actor_wg.world_size)
-			padded_lm_outputs = self.actor_wg.generate_sequences(padded_lm_inputs)
+			self._last_padded_inputs = padded_lm_inputs
+			padded_lm_outputs = self.actor_wg.generate_sequences(
+				padded_lm_inputs, mode=mode, skip_generation=skip_generation
+			)
+			if skip_generation:
+				return lm_inputs
 			lm_outputs = unpad_dataproto(padded_lm_outputs, pad_size=pad_size)
 			lm_outputs.meta_info = lm_inputs.meta_info
 			lm_outputs.non_tensor_batch = lm_inputs.non_tensor_batch
 		elif isinstance(self.actor_wg, VllmWrapperWg) or isinstance(self.actor_wg, ApiCallingWrapperWg):
-			lm_outputs = self.actor_wg.generate_sequences(lm_inputs)
+			lm_outputs = self.actor_wg.generate_sequences(lm_inputs, mode=mode, skip_generation=skip_generation)
 		else:
 			raise ValueError(f"Unsupported actor worker type: {type(self.actor_wg)}")
 
@@ -145,14 +157,39 @@ class LLMAgentProxy:
 		ctx_manager = self.val_ctx_manager if val else self.train_ctx_manager
 		env_outputs = es_manager.reset()
 
-		for i in range(self.config.agent_proxy.max_turn):
+		max_turn = self.config.agent_proxy.max_turn
+		multi_turn = max_turn > 1
+		finalized = False
+		last_inputs = None
+
+		for i in range(max_turn):
+			if len(env_outputs) == 0:
+				break
 			lm_inputs: DataProto = ctx_manager.get_lm_inputs(env_outputs, prepare_for_update=False)
 			lm_inputs.meta_info = dataproto.meta_info # TODO: setup vllm early stop when max length is reached. make sure this can be done
-			lm_outputs: DataProto = self.generate_sequences(lm_inputs)
+			last_inputs = lm_inputs
+			if multi_turn:
+				if i == 0:
+					mode = "multiturn-start"
+				elif i == max_turn - 1:
+					mode = "multiturn-end"
+				else:
+					mode = "multiturn-middle"
+			else:
+				mode = "singleturn"
+			lm_outputs: DataProto = self.generate_sequences(lm_inputs, mode=mode)
+			if mode == "multiturn-end":
+				finalized = True
 			env_inputs: List[Dict] = ctx_manager.get_env_inputs(lm_outputs)
 			env_outputs: List[Dict] = es_manager.step(env_inputs)
 			if len(env_outputs) == 0: # all finished
+				if multi_turn and not finalized and last_inputs is not None:
+					self.generate_sequences(last_inputs, mode="multiturn-end", skip_generation=True)
+					finalized = True
 				break
+
+		if multi_turn and not finalized and last_inputs is not None:
+			self.generate_sequences(last_inputs, mode="multiturn-end", skip_generation=True)
 		rollout_states = es_manager.get_rollout_states() 
 		rollouts = ctx_manager.formulate_rollouts(rollout_states)
 		# self.tokenizer.batch_decode(rollouts.batch['input_ids'], skip_special_tokens=False) # see all the trajectories
@@ -214,4 +251,9 @@ def main(config):
 
 
 if __name__ == "__main__":
+	import sys
+	sys.argv.extend([
+	    "--config-dir", os.path.join(os.path.dirname(__file__), "../../ragen/config"),
+        "--config-dir", os.path.join(os.path.dirname(__file__), "../../verl/verl/trainer/config"),
+    ])
 	main()

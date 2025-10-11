@@ -9,7 +9,7 @@ seed:
   train: 10000
   val: 123
 
-micro_batch_size_per_gpu: 1
+micro_batch_size_per_gpu: 8
 ppo_mini_batch_size: 32
 model_path: Qwen/Qwen2.5-3B-Instruct
 enable_response_mask: True # Enabling response mask could improve stability of rollout/old_log_prob, as P(st|history) are no longer calculated in loss here. See https://docs.google.com/document/d/1bg7obeiKTExuHHBl5uOiSpec5uLDZ2Tgvxy6li5pHX4/edit?usp=sharing for more details.
@@ -28,7 +28,6 @@ actor_rollout_ref:
     target_modules: ${lora.target_modules}
   actor:
     ppo_mini_batch_size: ${ppo_mini_batch_size}  # by default, ppo_mini_batch_size = train_batch_size / 4
-    micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
     ppo_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
     use_ref: True
     entropy_coeff: 0.001
@@ -43,15 +42,18 @@ actor_rollout_ref:
   ref:
     log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
   rollout:
+    name: vllm
     log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu} # following micro_batch_size_per_gpu
     tensor_model_parallel_size: 1
     max_model_len: 3600
     prompt_length: 1 # useless. Just put it here
     response_length: 400 # single-turn response length
-    gpu_memory_utilization: 0.5
+    gpu_memory_utilization: 0.7
     max_num_batched_tokens: 8192 # set only when enable_chunked_prefill is true
     temperature: 1
-    rollout_filter_ratio: 0.25
+    rollout_filter_ratio: 1
+    # disable_log_stats: False
+    # log_stats_interval: 2
     rollout_filter_type: std # max_mean or std
     enforce_eager: True #  for small models, set both enforce_eager and free_cache_engine to False to make rollout faster
     free_cache_engine: True
@@ -91,7 +93,6 @@ trainer:
   project_name: ragen_latest
   experiment_name: test
   local_log_dir: "results/"
-  wandb_id: null
   save_freq: 100
   total_training_steps: 200
   validation_steps: 1 # validation instances = validation_steps * val_env_groups * group_size
@@ -99,7 +100,6 @@ trainer:
   n_gpus_per_node: 1
   test_freq: 10
   generations_to_log_to_wandb: 
-    train: 128 # TODO: will be implemented
     val: 20
   logger: [ 'console', 'wandb' ]
 
