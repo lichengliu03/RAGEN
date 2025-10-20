@@ -21,7 +21,7 @@ print_step() {
 # Install if you want to use webshop
 conda install -c pytorch faiss-cpu -y
 sudo apt update
-sudo apt install default-jdk
+sudo apt install default-jdk -y
 conda install -c conda-forge openjdk=21 maven -y
 
 # Install remaining requirements

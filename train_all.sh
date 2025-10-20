@@ -186,16 +186,61 @@ python train.py trainer.experiment_name=sokoban-bi-level-gae-final \
     agent_proxy.use_turn_scores=True \
     actor_rollout_ref.rollout.tp_size_check=False
 
+
 # extension: webshop
+USE_PPO="algorithm.adv_estimator=gae" # by default.
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop system.CUDA_VISIBLE_DEVICES=\"0,1\" trainer.n_gpus_per_node=2 \
+    trainer.experiment_name=webshop-3b-ppo-s $USE_PPO \
+    trainer.nnodes=1 &
+
+
+USE_GRPO="algorithm.adv_estimator=grpo" # by default.
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop system.CUDA_VISIBLE_DEVICES=\"2,3\" trainer.n_gpus_per_node=2 \
+    trainer.experiment_name=webshop-3b-grpo-s $USE_GRPO \
+    trainer.nnodes=1 &
+
 # StarPO ppo
-MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name webshop_3b_train system.CUDA_VISIBLE_DEVICES=\"4,5\" trainer.n_gpus_per_node=2 \
+USE_PPO="algorithm.adv_estimator=gae" # by default.
+USE_BASE="algorithm.kl_ctrl.kl_coef=0.001 actor_rollout_ref.actor.kl_loss_coef=0.001 actor_rollout_ref.actor.clip_ratio_high=0.2 actor_rollout_ref.rollout.rollout_filter_ratio=1"
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop system.CUDA_VISIBLE_DEVICES=\"4,5\" trainer.n_gpus_per_node=2 \
     trainer.experiment_name=webshop-3b-ppo $USE_PPO $USE_BASE \
     es_manager.train.env_groups=2 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups=[2] \
-    trainer.nnodes=1
+    trainer.nnodes=1 &
 
 # StarPO grpo
-MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name webshop_3b_train system.CUDA_VISIBLE_DEVICES=\"6,7\" trainer.n_gpus_per_node=2 \
+USE_GRPO="algorithm.adv_estimator=grpo"
+USE_BASE="algorithm.kl_ctrl.kl_coef=0.001 actor_rollout_ref.actor.kl_loss_coef=0.001 actor_rollout_ref.actor.clip_ratio_high=0.2 actor_rollout_ref.rollout.rollout_filter_ratio=1"
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _6_webshop system.CUDA_VISIBLE_DEVICES=\"6,7\" trainer.n_gpus_per_node=2 \
     trainer.experiment_name=webshop-3b-grpo $USE_GRPO $USE_BASE \
     es_manager.train.env_groups=2 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups=[2] \
-    trainer.nnodes=1
-    
+    trainer.nnodes=1 &
+
+
+# normal:sokoban
+# extension: sokoban
+USE_PPO="algorithm.adv_estimator=gae" # by default.
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES=\"0,1\" trainer.n_gpus_per_node=2 \
+    trainer.experiment_name=sokoban-3b-ppo-s $USE_PPO \
+    trainer.nnodes=1 &
+
+
+USE_GRPO="algorithm.adv_estimator=grpo" # by default.
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES=\"2,3\" trainer.n_gpus_per_node=2 \
+    trainer.experiment_name=sokoban-3b-grpo-s $USE_GRPO \
+    trainer.nnodes=1 &
+
+# StarPO ppo
+USE_PPO="algorithm.adv_estimator=gae" # by default.
+USE_BASE="algorithm.kl_ctrl.kl_coef=0.001 actor_rollout_ref.actor.kl_loss_coef=0.001 actor_rollout_ref.actor.clip_ratio_high=0.2 actor_rollout_ref.rollout.rollout_filter_ratio=1"
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES=\"4,5\" trainer.n_gpus_per_node=2 \
+    trainer.experiment_name=sokoban-3b-ppo $USE_PPO $USE_BASE \
+    es_manager.train.env_groups=2 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups=[2] \
+    trainer.nnodes=1 &
+
+# StarPO grpo
+USE_GRPO="algorithm.adv_estimator=grpo"
+USE_BASE="algorithm.kl_ctrl.kl_coef=0.001 actor_rollout_ref.actor.kl_loss_coef=0.001 actor_rollout_ref.actor.clip_ratio_high=0.2 actor_rollout_ref.rollout.rollout_filter_ratio=1"
+MKL_SERVICE_FORCE_INTEL=1 python train.py --config-name _2_sokoban system.CUDA_VISIBLE_DEVICES=\"6,7\" trainer.n_gpus_per_node=2 \
+    trainer.experiment_name=sokoban-3b-grpo $USE_GRPO $USE_BASE \
+    es_manager.train.env_groups=2 es_manager.train.group_size=16 es_manager.train.env_configs.n_groups=[2] \
+    trainer.nnodes=1 &

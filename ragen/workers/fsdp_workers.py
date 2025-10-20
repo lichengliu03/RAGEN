@@ -15,10 +15,11 @@
 The main entry point to run the PPO algorithm
 """
 
-import asyncio
 import logging
 import os
 import warnings
+import asyncio
+asyncio.set_event_loop(asyncio.new_event_loop())
 
 import torch
 from omegaconf import OmegaConf
