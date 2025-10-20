@@ -99,8 +99,8 @@ custom_envs:
     env_instruction: ""
     max_tokens: 100
     env_config: 
-      lo_arm_name: "Phoenix"
-      hi_arm_name: "Dragon"
+      lo_arm_name: "Engineer"
+      hi_arm_name: "Teacher"
 
   BanditTest:
     env_type: bandit
