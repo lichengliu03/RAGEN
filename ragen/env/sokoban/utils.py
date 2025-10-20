@@ -23,7 +23,7 @@ def collect_entity_coordinates(room_state: np.ndarray, room_fixed: np.ndarray, i
     """Collect coordinates for key Sokoban entities using the given origin."""
 
     coords: CoordDict = {
-        "walls": _to_tuple_list(np.argwhere(room_fixed == 0), index_origin),
+        # "walls": _to_tuple_list(np.argwhere(room_fixed == 0), index_origin), # do not render wall since it's too heavy
         "targets": _to_tuple_list(np.argwhere(room_fixed == 2), index_origin),
         "boxes_on_target": _to_tuple_list(np.argwhere(room_state == 3), index_origin),
         "boxes": _to_tuple_list(np.argwhere(room_state == 4), index_origin),
