@@ -166,7 +166,7 @@ class EntropyRolloutFilter(RolloutFilter):
         if loss_mask is None:
             loss_mask = batch.batch.get("response_mask")
         if loss_mask is None:
-            raise ValueError("EntropyVarianceRolloutFilter requires loss_mask or response_mask in the batch")
+            raise ValueError("EntropyRolloutFilter requires loss_mask or response_mask in the batch")
 
         loss_mask = loss_mask.to(entropys.device)
         token_counts = loss_mask.sum(dim=-1).clamp(min=1)
@@ -224,6 +224,6 @@ def build_rollout_filter(
     if metric in {"entropy", "entropy_variance", "entropy_std"}:
         if compute_log_prob is None:
             raise ValueError("Entropy variance filtering requires a compute_log_prob callable")
-        return EntropyVarianceRolloutFilter(config, compute_log_prob=compute_log_prob)
+        return EntropyRolloutFilter(config, compute_log_prob=compute_log_prob)
 
     raise ValueError(f"Unsupported rollout filter metric: {metric}")
