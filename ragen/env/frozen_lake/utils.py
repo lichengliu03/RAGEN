@@ -86,12 +86,12 @@ def is_valid(board: List[List[str]], max_size: int) -> bool:
     return False
 
 
-def generate_random_map(size: int = 8, p: float = 0.8, seed: Optional[int] = None) -> List[str]:
+def generate_random_map(size: int = 8, p: float = 0.85, seed: Optional[int] = None) -> List[str]:
     """
     Generates a random valid map with a path from start (S) to goal (G).
     Args:
         size: The size of the map.
-        p: The probability of generating a hole (H).
+        p: The probability of generating a frozen tile (F).
         seed: The seed for the random number generator.
     Returns:
         A list of strings representing the map.

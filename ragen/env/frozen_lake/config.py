@@ -6,7 +6,8 @@ class FrozenLakeEnvConfig:
     """Configuration for FrozenLake environment"""
     # Map config
     size: int = 4
-    p: float = 0.8
+    p: float = 0.85
+    success_rate: float = 0.75
     is_slippery: bool = True
     map_seed: Optional[int] = None
     render_mode: str = "text"

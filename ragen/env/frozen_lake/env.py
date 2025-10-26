@@ -27,7 +27,8 @@ class FrozenLakeEnv(BaseDiscreteActionEnv, GymFrozenLakeEnv):
             self,
             desc=random_map,
             is_slippery=config.is_slippery,
-            render_mode=config.render_mode
+            render_mode=config.render_mode,
+            success_rate=config.success_rate
         )
 
     def reset(self, seed=None, mode=None):
@@ -93,7 +94,7 @@ class FrozenLakeEnv(BaseDiscreteActionEnv, GymFrozenLakeEnv):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    config = FrozenLakeEnvConfig(size=4, p=0.8, is_slippery=True, map_seed=42)
+    config = FrozenLakeEnvConfig(size=4, p=0.85, is_slippery=True, map_seed=42)
     env = FrozenLakeEnv(config)
     print(env.reset(seed=42))
     while True:
