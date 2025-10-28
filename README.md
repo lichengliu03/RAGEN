@@ -331,6 +331,7 @@ For more details on how `dstack` can be used for distributed training, check out
 We welcome all forms of feedback! Please raise an issue for bugs, questions, or suggestions. This helps our team address common problems efficiently and builds a more productive community.
 
 ## Awesome work powered or inspired by RAGEN
+ - [ROLL](https://github.com/alibaba/ROLL): An Efficient and User-Friendly Scaling Library for Reinforcement Learning with Large Language Models
  - [VAGEN](https://github.com/RAGEN-AI/VAGEN): Training Visual Agents with multi-turn reinforcement learning
  - [Search-R1](https://github.com/PeterGriffinJin/Search-R1): Train your LLMs to reason and call a search engine with reinforcement learning
  - [ZeroSearch](https://github.com/Alibaba-nlp/ZeroSearch): Incentivize the Search Capability of LLMs without Searching
