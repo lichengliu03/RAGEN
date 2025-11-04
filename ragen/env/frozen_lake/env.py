@@ -94,9 +94,9 @@ class FrozenLakeEnv(BaseDiscreteActionEnv, GymFrozenLakeEnv):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    config = FrozenLakeEnvConfig(size=4, p=0.85, is_slippery=True, map_seed=42)
+    config = FrozenLakeEnvConfig(size=4, is_slippery=True)
     env = FrozenLakeEnv(config)
-    print(env.reset(seed=42))
+    print(env.reset())
     while True:
         keyboard = input("Enter action: ")
         if keyboard == 'q':

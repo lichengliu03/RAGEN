@@ -108,8 +108,24 @@ class RolloutFilter:
         return metrics
 
 
-class RewardVarianceRolloutFilter(RolloutFilter):
-    """Filters rollouts based on reward variance within groups."""
+class RewardRolloutFilter(RolloutFilter):
+    """Filters rollouts based on reward statistics within groups."""
+
+    _METRIC_OPTIONS = {"reward", "reward_variance"}
+
+    def __init__(self, config: RolloutFilterConfig) -> None:
+        super().__init__(config)
+        if config.metric not in self._METRIC_OPTIONS:
+            raise ValueError(
+                f"RewardRolloutFilter only supports metrics {self._METRIC_OPTIONS}, got {config.metric}"
+            )
+
+    def _selection_scores(
+        self, in_group_std: torch.Tensor, in_group_mean: torch.Tensor
+    ) -> torch.Tensor:
+        if self.config.metric == "reward":
+            return in_group_mean
+        return in_group_std
 
     def filter(self, batch: DataProto) -> Tuple[DataProto, Dict[str, torch.Tensor]]:
         rollout_filter_ratio = self.ratio
@@ -120,7 +136,8 @@ class RewardVarianceRolloutFilter(RolloutFilter):
         in_group_max = rm_scores.max(dim=-1).values
         in_group_mean = rm_scores.mean(dim=-1)
 
-        top_groups = self._select_top_groups(in_group_std)
+        selection_scores = self._selection_scores(in_group_std, in_group_mean)
+        top_groups = self._select_top_groups(selection_scores)
 
         metrics = self._build_base_metrics(in_group_std, in_group_max, in_group_mean, top_groups)
         metrics.update(
@@ -144,7 +161,9 @@ class RewardVarianceRolloutFilter(RolloutFilter):
 
 
 class EntropyRolloutFilter(RolloutFilter):
-    """Filters rollouts based on policy entropy amount within groups."""
+    """Filters rollouts based on policy entropy statistics within groups."""
+
+    _METRIC_OPTIONS = {"entropy", "entropy_variance"}
 
     def __init__(
         self,
@@ -152,7 +171,18 @@ class EntropyRolloutFilter(RolloutFilter):
         compute_log_prob: Callable[[DataProto], DataProto],
     ) -> None:
         super().__init__(config)
+        if config.metric not in self._METRIC_OPTIONS:
+            raise ValueError(
+                f"EntropyRolloutFilter only supports metrics {self._METRIC_OPTIONS}, got {config.metric}"
+            )
         self._compute_log_prob = compute_log_prob
+
+    def _selection_scores(
+        self, in_group_std: torch.Tensor, in_group_mean: torch.Tensor
+    ) -> torch.Tensor:
+        if self.config.metric == "entropy":
+            return in_group_mean
+        return in_group_std
 
     def filter(self, batch: DataProto) -> Tuple[DataProto, Dict[str, torch.Tensor]]:
         rollout_filter_ratio = self.ratio
@@ -174,11 +204,13 @@ class EntropyRolloutFilter(RolloutFilter):
 
         num_groups, group_size = self.num_groups, self.group_size
         entropy_per_group = entropy_per_traj.view(num_groups, group_size)
+
         in_group_std = entropy_per_group.std(dim=-1)
         in_group_max = entropy_per_group.max(dim=-1).values
         in_group_mean = entropy_per_group.mean(dim=-1)
 
-        top_groups = self._select_top_groups(in_group_mean)
+        selection_scores = self._selection_scores(in_group_std, in_group_mean)
+        top_groups = self._select_top_groups(selection_scores)
 
         metrics = self._build_base_metrics(in_group_std, in_group_max, in_group_mean, top_groups)
         metrics.update(
@@ -201,6 +233,11 @@ class EntropyRolloutFilter(RolloutFilter):
         return batch, metrics
 
 
+# Backwards compatibility: preserve older class names.
+RewardVarianceRolloutFilter = RewardRolloutFilter
+EntropyVarianceRolloutFilter = EntropyRolloutFilter
+
+
 def build_rollout_filter(
     ratio: float,
     filter_type: str,
@@ -210,6 +247,10 @@ def build_rollout_filter(
     compute_log_prob: Optional[Callable[[DataProto], DataProto]] = None,
 ) -> RolloutFilter:
     metric = (metric or "reward_variance").lower()
+    metric = {
+        "reward_std": "reward_variance",
+        "entropy_std": "entropy_variance",
+    }.get(metric, metric)
 
     config = RolloutFilterConfig(
         ratio=ratio,
@@ -219,11 +260,11 @@ def build_rollout_filter(
         metric=metric,
     )
 
-    if metric in {"reward", "reward_variance", "reward_std"}:
-        return RewardVarianceRolloutFilter(config)
-    if metric in {"entropy", "entropy_variance", "entropy_std"}:
+    if metric in {"reward", "reward_variance"}:
+        return RewardRolloutFilter(config)
+    if metric in {"entropy", "entropy_variance"}:
         if compute_log_prob is None:
-            raise ValueError("Entropy variance filtering requires a compute_log_prob callable")
+            raise ValueError("Entropy filtering requires a compute_log_prob callable")
         return EntropyRolloutFilter(config, compute_log_prob=compute_log_prob)
 
     raise ValueError(f"Unsupported rollout filter metric: {metric}")

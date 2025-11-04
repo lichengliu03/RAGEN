@@ -29,7 +29,11 @@ if "verl" not in sys.modules:
     sys.modules["verl"] = stub
 
 
-from ragen.trainer.rollout_filter import RolloutFilterConfig, RewardVarianceRolloutFilter, EntropyVarianceRolloutFilter
+from ragen.trainer.rollout_filter import (
+    RolloutFilterConfig,
+    RewardRolloutFilter,
+    EntropyRolloutFilter,
+)
 
 
 def _make_reward_batch(num_groups: int, group_size: int, traj_len: int):
@@ -51,10 +55,10 @@ def test_reward_variance_filter_reduces_batch_size():
     num_groups, group_size, traj_len = 4, 2, 3
     batch = _make_reward_batch(num_groups, group_size, traj_len)
 
-    rollout_filter = RewardVarianceRolloutFilter(
+    rollout_filter = RewardRolloutFilter(
         RolloutFilterConfig(
             ratio=0.5,
-            filter_type="std",
+            filter_type="largest",
             num_groups=num_groups,
             group_size=group_size,
         )
@@ -83,10 +87,10 @@ def test_entropy_variance_filter_uses_compute_log_prob():
         )
         return sys.modules["verl"].DataProto(batch=td, non_tensor_batch={}, meta_info={})
 
-    rollout_filter = EntropyVarianceRolloutFilter(
+    rollout_filter = EntropyRolloutFilter(
         RolloutFilterConfig(
             ratio=0.5,
-            filter_type="std",
+            filter_type="largest",
             num_groups=num_groups,
             group_size=group_size,
             metric="entropy",
@@ -100,3 +104,34 @@ def test_entropy_variance_filter_uses_compute_log_prob():
     assert filtered_batch.batch["loss_mask"].shape[0] == expected
     assert "old_log_probs" in filtered_batch.batch.keys()
     assert "rollout/in_group_entropy_std" in metrics
+
+
+def test_reward_metric_selects_high_mean_group():
+    num_groups, group_size, traj_len = 2, 2, 1
+    batch = _make_reward_batch(num_groups, group_size, traj_len)
+
+    # Overwrite scores: first group has higher mean, second has higher variance.
+    batch.batch["original_rm_scores"] = torch.tensor(
+        [
+            [10.0],
+            [11.0],
+            [0.0],
+            [5.0],
+        ]
+    )
+
+    rollout_filter = RewardRolloutFilter(
+        RolloutFilterConfig(
+            ratio=0.5,
+            filter_type="largest",
+            num_groups=num_groups,
+            group_size=group_size,
+            metric="reward",
+        )
+    )
+
+    filtered_batch, _ = rollout_filter.filter(batch)
+
+    # Highest mean group is the first one, so we expect its entries to remain.
+    retained = filtered_batch.batch["original_rm_scores"].squeeze(-1)
+    assert torch.allclose(retained, torch.tensor([10.0, 11.0]))
