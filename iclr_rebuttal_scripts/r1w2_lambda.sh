@@ -23,10 +23,6 @@ cd "${REPO_DIR}"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
 conda activate ragen || true
 
-MODELS_DEFAULT=("LichengLiu03/Qwen2.5-3B-UFO" "LichengLiu03/Qwen2.5-3B-UFO-1turn")
-MODELS=("${MODELS[@]:-${MODELS_DEFAULT[@]}}")
-LAMBDAS_DEFAULT=("0.0" "0.5" "1.0" "2.0" "3.0")
-LAMBDAS=("${LAMBDAS[@]:-${LAMBDAS_DEFAULT[@]}}")
 GAMMA="${GAMMA:-1.0}"
 
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
@@ -48,8 +44,7 @@ echo "[Lambda-Sens] Output base: ${OUT_BASE}"
 echo "[Lambda-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}"
 echo "[Lambda-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
 echo "[Lambda-Sens] GAMMA=${GAMMA}"
-echo "[Lambda-Sens] LAMBDAS: ${LAMBDAS[*]}"
-echo "[Lambda-Sens] MODELS: ${MODELS[*]}"
+echo "[Lambda-Sens] This script will run 10 experiments (2 models x 5 lambdas)."
 
 summarize_run() {
   local rollout_path="$1"
@@ -93,12 +88,28 @@ print(json.dumps({
 PY
 }
 
-for model in "${MODELS[@]}"; do
-  model_safe="$(echo "${model}" | sed 's|/|-|g')"
-  for lambda_val in "${LAMBDAS[@]}"; do
-    out_dir="${OUT_BASE}/${model_safe}/lambda_${lambda_val}_gamma_${GAMMA}"
-    mkdir -p "${out_dir}"
+safe_append_csv() {
+  # $1=row, $2=key (grep -F)
+  local row="$1" key="$2"
+  if ! grep -Fq -- "${key}" "${SUMMARY_CSV}"; then
+    echo "${row}" >> "${SUMMARY_CSV}"
+  else
+    echo "[Lambda-Sens] Skip duplicate CSV row for key: ${key}"
+  fi
+}
 
+run_lambda() {
+  local model="$1"
+  local lambda_val="$2"
+  local model_safe out_dir rollout_path
+  model_safe="$(echo "${model}" | sed 's|/|-|g')"
+  out_dir="${OUT_BASE}/${model_safe}/lambda_${lambda_val}_gamma_${GAMMA}"
+    mkdir -p "${out_dir}"
+  rollout_path="${out_dir}/rollouts.pkl"
+
+  if [[ -f "${rollout_path}" ]]; then
+    echo "[Lambda-Sens] Rollout exists, skip train/eval: model=${model}, lambda=${lambda_val}, gamma=${GAMMA}"
+  else
     # -------------------
     # 1) Light training -> save HF weights
     # -------------------
@@ -145,24 +156,37 @@ for model in "${MODELS[@]}"; do
       output.filename="rollouts.pkl" \
       output.append_timestamp=false \
       trainer.logger=[console]
+  fi
 
-    rollout_path="${out_dir}/rollouts.pkl"
-    if [[ -f "${rollout_path}" ]]; then
-      summary_json="$(summarize_run "${rollout_path}" "${lambda_val}" "${GAMMA}" "${model}")"
-      echo "[Lambda-Sens] Summary: ${summary_json}"
-      avg_reward="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['avg_reward'])")"
-      success="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['success'])")"
-      pass_at_k="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['pass_at_k'])")"
-      num_actions="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['num_actions'])")"
-      rep_df="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['rep_distinct_fraction'])")"
-      rep_pen="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['rep_penalty'])")"
-      echo "${lambda_val},${model},${GAMMA},${avg_reward},${success},${pass_at_k},${num_actions},${rep_df},${rep_pen}" >> "${SUMMARY_CSV}"
-      echo "${summary_json}" > "${out_dir}/summary.json"
-    else
-      echo "[Lambda-Sens][WARN] Missing rollout at ${rollout_path}"
-    fi
-  done
-done
+  if [[ -f "${rollout_path}" ]]; then
+    summary_json="$(summarize_run "${rollout_path}" "${lambda_val}" "${GAMMA}" "${model}")"
+    echo "[Lambda-Sens] Summary: ${summary_json}"
+    avg_reward="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['avg_reward'])")"
+    success="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['success'])")"
+    pass_at_k="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['pass_at_k'])")"
+    num_actions="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['num_actions'])")"
+    rep_df="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['rep_distinct_fraction'])")"
+    rep_pen="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['rep_penalty'])")"
+    row="${lambda_val},${model},${GAMMA},${avg_reward},${success},${pass_at_k},${num_actions},${rep_df},${rep_pen}"
+    key="${lambda_val},${model},${GAMMA},"
+    safe_append_csv "${row}" "${key}"
+    echo "${summary_json}" > "${out_dir}/summary.json"
+  else
+    echo "[Lambda-Sens][WARN] Missing rollout at ${rollout_path}"
+  fi
+}
+
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "0.0"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "0.5"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "1.0"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "2.0"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "3.0"
+
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "0.0"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "0.5"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "1.0"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "2.0"
+run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "3.0"
 
 echo "[All Done] Summary CSV: ${SUMMARY_CSV}"
 

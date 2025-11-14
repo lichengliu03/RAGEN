@@ -40,11 +40,6 @@ cd "${REPO_DIR}"
 OUT_BASE="${REPO_DIR}/result/eval/r1w1"
 mkdir -p "${OUT_BASE}"
 
-MODELS=(
-  "LichengLiu03/Qwen2.5-3B-UFO"
-  "LichengLiu03/Qwen2.5-3B-UFO-1turn"
-)
-
 # Eval scale (can override via env)
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
@@ -65,18 +60,22 @@ run_eval_for_model() {
 
   # Use the eval entry that does NOT train; override env to MetaMathQA
   # Force single turn for MetaMathQA
-  ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
-    actor_rollout_ref.model.path="${model_path}" \
-    es_manager.train.env_configs.tags=[MetamathQA] \
-    es_manager.val.env_configs.tags=[MetamathQA] \
-    es_manager.val.env_groups=${ES_VAL_GROUPS} \
-    es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
-    agent_proxy.max_turn=1 \
-    output.dir="${out_dir}" \
-    output.filename="rollouts.pkl" \
-    output.append_timestamp=false \
-    trainer.logger=[console] \
-    actor_rollout_ref.rollout.val_kwargs.do_sample=false
+  if [[ ! -f "${out_dir}/rollouts.pkl" ]]; then
+    ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
+      actor_rollout_ref.model.path="${model_path}" \
+      es_manager.train.env_configs.tags=[MetamathQA] \
+      es_manager.val.env_configs.tags=[MetamathQA] \
+      es_manager.val.env_groups=${ES_VAL_GROUPS} \
+      es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
+      agent_proxy.max_turn=1 \
+      output.dir="${out_dir}" \
+      output.filename="rollouts.pkl" \
+      output.append_timestamp=false \
+      trainer.logger=[console] \
+      actor_rollout_ref.rollout.val_kwargs.do_sample=false
+  else
+    echo "[Eval] Skip existing rollouts: ${out_dir}/rollouts.pkl"
+  fi
 
   echo "[Eval] Saved: ${out_dir}/rollouts.pkl"
 }
@@ -95,6 +94,11 @@ generate_fuzzy_feedback() {
   fi
   if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     echo "[Feedback] OPENAI_API_KEY not set. Skipping feedback for ${model_path}."
+    return 0
+  fi
+
+  if [[ -f "${feedback_path}" ]]; then
+    echo "[Feedback] Skip existing: ${feedback_path}"
     return 0
   fi
 
@@ -179,10 +183,11 @@ PY
 # Export REPO_DIR for the Python snippet
 export REPO_DIR="${REPO_DIR}"
 
-for model in "${MODELS[@]}"; do
-  run_eval_for_model "${model}"
-  MODEL_PATH="${model}" generate_fuzzy_feedback "${model}"
-done
+run_eval_for_model "LichengLiu03/Qwen2.5-3B-UFO"
+MODEL_PATH="LichengLiu03/Qwen2.5-3B-UFO" generate_fuzzy_feedback "LichengLiu03/Qwen2.5-3B-UFO"
+
+run_eval_for_model "LichengLiu03/Qwen2.5-3B-UFO-1turn"
+MODEL_PATH="LichengLiu03/Qwen2.5-3B-UFO-1turn" generate_fuzzy_feedback "LichengLiu03/Qwen2.5-3B-UFO-1turn"
 
 echo "[All Done] Results under: ${OUT_BASE}"
 
