@@ -12,6 +12,9 @@
 #SBATCH -e slurm-%x-%j.err
 set -euo pipefail
 
+DEVICES=\"0,1,2,3,4,5,6,7\"
+export CUDA_VISIBLE_DEVICES="${DEVICES}"
+
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
 
@@ -89,6 +92,9 @@ run_eval_for_model() {
     ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
       trainer.experiment_name="${run_name}" \
       actor_rollout_ref.model.path="${model_path}" \
+      system.CUDA_VISIBLE_DEVICES="${DEVICES}" \
+      trainer.n_gpus_per_node=8 \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=${TAGS_LIST} \
       es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
@@ -217,5 +223,3 @@ run_eval_for_model "LichengLiu03/Qwen2.5-3B-UFO-1turn"
 MODEL_PATH="LichengLiu03/Qwen2.5-3B-UFO-1turn" generate_fuzzy_feedback "LichengLiu03/Qwen2.5-3B-UFO-1turn"
 
 echo "[All Done] Results under: ${OUT_BASE}"
-
-

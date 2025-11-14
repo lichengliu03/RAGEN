@@ -12,6 +12,9 @@
 #SBATCH -e slurm-%x-%j.err
 set -euo pipefail
 
+DEVICES=\"0,1,2,3,4,5,6,7\"
+export CUDA_VISIBLE_DEVICES="${DEVICES}"
+
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -114,6 +117,9 @@ PY
   timeout "${timeout_spec}" ${PYTHON_BIN} train.py \
     trainer.experiment_name="${run_name}" \
     model_path="${model}" \
+    system.CUDA_VISIBLE_DEVICES="${DEVICES}" \
+    trainer.n_gpus_per_node=8 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.val.env_configs.tags=[MetamathQA] \
     +custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
@@ -137,6 +143,9 @@ PY
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
     trainer.experiment_name="${eval_name}" \
     actor_rollout_ref.model.path="${HF_DIR}" \
+    system.CUDA_VISIBLE_DEVICES="${DEVICES}" \
+    trainer.n_gpus_per_node=8 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.train.env_configs.n_groups=[1] \
     es_manager.val.env_configs.tags=[MetamathQA] \
@@ -176,6 +185,3 @@ run_for_hours "Qwen/Qwen2.5-3B-Instruct" "3.0" "1"
 run_for_hours "Qwen/Qwen2.5-3B-Instruct" "3.0" "5"
 
 echo "[All Done] Results under: ${OUT_BASE}"
-
-
-
