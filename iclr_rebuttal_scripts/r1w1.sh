@@ -46,6 +46,22 @@ WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
+# Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
+make_repeat_list() {
+  local val="$1" n="$2"
+  local s="[" i
+  for ((i=0; i<n; i++)); do
+    if (( i > 0 )); then s+=","
+    fi
+    s+="${val}"
+  done
+  s+="]"
+  printf "%s" "${s}"
+}
+VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
+TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
+TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
+
 echo "[Eval] Repo: ${REPO_DIR}"
 echo "[Eval] Output base: ${OUT_BASE}"
 echo "[Eval] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
@@ -71,8 +87,9 @@ run_eval_for_model() {
       trainer.experiment_name="${run_name}" \
       actor_rollout_ref.model.path="${model_path}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
-      es_manager.val.env_configs.tags=[MetamathQA] \
-      es_manager.val.env_groups=${ES_VAL_GROUPS} \
+      es_manager.val.env_configs.tags=${TAGS_LIST} \
+      es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
+      es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
       es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
       agent_proxy.max_turn=1 \
       output.dir="${out_dir}" \

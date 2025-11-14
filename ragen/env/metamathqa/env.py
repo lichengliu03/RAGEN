@@ -13,6 +13,9 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
         
         self.config = config
         self.dataset = load_dataset(path=self.config.dataset_path, cache_dir=self.config.cache_dir)
+        self.dataset = self.dataset[self.config.split].filter(
+            lambda example: example['type'].startswith('MATH_')
+        )
         self.current_question_idx = None
         self.current_question = None
         self.correct_answer = None

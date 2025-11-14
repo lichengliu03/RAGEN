@@ -130,10 +130,74 @@ custom_envs:
 
   MetamathQA:
     env_type: metamathqa
-    max_actions_per_traj: 1
+    max_actions_per_traj: 5
     env_instruction: "You are solving Math problems. "
     max_tokens: 100
     env_config: null
+  
+  TheoremQA:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are solving Math problems."
+    max_tokens: 1000
+    env_config:
+      dataset_name: theoremqa
+  
+  GSM8k:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are solving math problems."
+    max_tokens: 1000
+    env_config:
+      dataset_name: gsm8k
+  
+  GPQA:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are answering physics multiple-choice questions. Provide the correct option letter."
+    max_tokens: 1000
+    env_config:
+      dataset_name: gpqa
+  
+  MMLU-STEM:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are answering STEM-focused multiple-choice academic questions. Provide the correct option letter."
+    max_tokens: 1000
+    env_config:
+      dataset_name: mmlu_stem
+  
+  HotpotQA:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are answering multi-hop reasoning questions. Use the provided context to answer the question accurately. "
+    max_tokens: 1000
+    env_config:
+      dataset_name: hotpotqa
+  
+  ConcurrentQA:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are answering multi-hop concurrent retrieval questions. Provide concise answers."
+    max_tokens: 1000
+    env_config:
+      dataset_name: concurrentqa
+
+  MMLU:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are answering multiple-choice academic questions. Provide the correct option letter."
+    max_tokens: 1000
+    env_config:
+      dataset_name: mmlu
+
+  MMLUPro:
+    env_type: static
+    max_actions_per_traj: 5
+    env_instruction: "You are answering advanced multiple-choice questions. Provide the correct option letter."
+    max_tokens: 1000
+    env_config:
+      dataset_name: mmlu_pro
 
   WebShop:
     env_type: webshop

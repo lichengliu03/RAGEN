@@ -19,7 +19,7 @@ class StaticEnv(BaseLanguageBasedEnv):
         dataset_config=getattr(config, "dataset_config", None)
         if dataset_config is None:
             dataset_config=REGISTERD_STATIC_ENV[self.config.dataset_name]["config"]
-        self.dataset = load_dataset(**dataset_config, cache_dir=self.config.cache_dir)
+        self.dataset = load_dataset(**dataset_config, cache_dir=self.config.cache_dir, trust_remote_code=True)
         
         if self.config.split is None:
             self.split = list(self.dataset.keys())[0]
@@ -30,11 +30,14 @@ class StaticEnv(BaseLanguageBasedEnv):
         self.current_question = None
         self.correct_answer = None
         self.step_num = None
+        self.current_image = None  # Store current image if multimodal
         
         self.processor = REGISTERD_STATIC_ENV[self.config.dataset_name]["processor"]
         self.compute_score= REGISTERD_STATIC_ENV[self.config.dataset_name]["compute_score"]
         
-    def reset(self, seed=None, mode=None):
+        self.last_observation = None
+        
+    def reset(self, seed=None):
         """Reset the environment and get a new question."""
         dataset_split = self.dataset[self.split]
         with all_seed(seed):
@@ -42,6 +45,11 @@ class StaticEnv(BaseLanguageBasedEnv):
         question_data = dataset_split[self.current_question_idx]
         self.current_question, self.correct_answer = self.processor(question_data)
         self.step_num = 0
+        
+        # Store current image if it exists (for multimodal datasets)
+        self.current_image = question_data.get("Picture", None)
+        
+        self.last_observation = self.current_question
         
         return self.current_question
         
@@ -64,8 +72,20 @@ class StaticEnv(BaseLanguageBasedEnv):
             "is_valid": is_valid,
         }
         
+        self.last_observation = observation
+        
         return observation, reward, done, info
 
+    def render(self, mode: str = 'text'):
+        return self.last_observation
+    
+    def get_current_image(self):
+        """Get the current image if it exists (for multimodal support)."""
+        return self.current_image
+    
+    def has_image(self):
+        """Check if the current question has an associated image."""
+        return self.current_image is not None
 
 if __name__ == "__main__":
     # Example usage

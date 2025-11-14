@@ -10,6 +10,8 @@ from .frozen_lake.config import FrozenLakeEnvConfig
 from .frozen_lake.env import FrozenLakeEnv
 from .metamathqa.env import MetaMathQAEnv
 from .metamathqa.config import MetaMathQAEnvConfig
+from .static.env import StaticEnv
+from .static.config import StaticEnvConfig
 
 
 REGISTERED_ENVS = {
@@ -18,6 +20,7 @@ REGISTERED_ENVS = {
     'sokoban': SokobanEnv,
     'frozen_lake': FrozenLakeEnv,
     # 'alfworld': AlfredTXTEnv,
+    'static': StaticEnv,
     'metamathqa': MetaMathQAEnv,
 }
 
@@ -27,6 +30,7 @@ REGISTERED_ENV_CONFIGS = {
     'sokoban': SokobanEnvConfig,
     'frozen_lake': FrozenLakeEnvConfig,
     # 'alfworld': AlfredEnvConfig,
+    'static': StaticEnvConfig,
     'metamathqa': MetaMathQAEnvConfig,
 }
 

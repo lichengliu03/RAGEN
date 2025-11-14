@@ -31,6 +31,22 @@ ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 MAX_TURN="${MAX_TURN:-5}"
 MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-4}"
 
+# Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
+make_repeat_list() {
+  local val="$1" n="$2"
+  local s="[" i
+  for ((i=0; i<n; i++)); do
+    if (( i > 0 )); then s+=","
+    fi
+    s+="${val}"
+  done
+  s+="]"
+  printf "%s" "${s}"
+}
+VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
+TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
+TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
+
 OUT_BASE="${REPO_DIR}/result/eval/r1w2_lambda"
 mkdir -p "${OUT_BASE}"
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
@@ -46,7 +62,7 @@ echo "[Lambda-Sens] Output base: ${OUT_BASE}"
 echo "[Lambda-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 echo "[Lambda-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
 echo "[Lambda-Sens] GAMMA=${GAMMA}"
-echo "[Lambda-Sens] This script will run 10 experiments (2 models x 5 lambdas)."
+echo "[Lambda-Sens] This script will run 5 experiments (1 model x 5 lambdas)."
 
 summarize_run() {
   local rollout_path="$1"
@@ -154,9 +170,9 @@ run_lambda() {
       actor_rollout_ref.model.path="${HF_DIR}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \
-      es_manager.val.env_configs.tags=[MetamathQA] \
-      es_manager.val.env_configs.n_groups=[${ES_VAL_GROUPS}] \
-      es_manager.val.env_groups=${ES_VAL_GROUPS} \
+      es_manager.val.env_configs.tags=${TAGS_LIST} \
+      es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
+      es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
       es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
       custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
       agent_proxy.max_turn=${MAX_TURN} \
@@ -187,17 +203,11 @@ run_lambda() {
   fi
 }
 
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "0.0"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "0.5"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "1.0"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "2.0"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO" "3.0"
-
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "0.0"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "0.5"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "1.0"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "2.0"
-run_lambda "LichengLiu03/Qwen2.5-3B-UFO-1turn" "3.0"
+run_lambda "Qwen/Qwen2.5-3B-Instruct" "0.0"
+run_lambda "Qwen/Qwen2.5-3B-Instruct" "0.5"
+run_lambda "Qwen/Qwen2.5-3B-Instruct" "1.0"
+run_lambda "Qwen/Qwen2.5-3B-Instruct" "2.0"
+run_lambda "Qwen/Qwen2.5-3B-Instruct" "3.0"
 
 echo "[All Done] Summary CSV: ${SUMMARY_CSV}"
 

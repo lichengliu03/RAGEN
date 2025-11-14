@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH -J r1q1
+#SBATCH -J r1q2
 #SBATCH -N 1
 #SBATCH --partition=gpuH200x8-interactive
 #SBATCH --account=bfea-delta-gpu
@@ -23,7 +23,7 @@ cd "${REPO_DIR}"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
 conda activate ragen || true
 
-MODELS_DEFAULT=("LichengLiu03/Qwen2.5-3B-UFO")
+MODELS_DEFAULT=("Qwen/Qwen2.5-3B-Instruct")
 MODELS=("${MODELS[@]:-${MODELS_DEFAULT[@]}}")
 
 # Number of questions per episode (effective when multi_question_mode is true)
@@ -36,31 +36,15 @@ ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 MAX_TURN="${MAX_TURN:-5}"
 MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
 
-# Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
-make_repeat_list() {
-  local val="$1" n="$2"
-  local s="[" i
-  for ((i=0; i<n; i++)); do
-    if (( i > 0 )); then s+=","
-    fi
-    s+="${val}"
-  done
-  s+="]"
-  printf "%s" "${s}"
-}
-VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
-TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
-TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
-
-OUT_BASE="${REPO_DIR}/result/eval/r1q1"
+OUT_BASE="${REPO_DIR}/result/eval/r1q2"
 mkdir -p "${OUT_BASE}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
-echo "[R1Q1] Repo: ${REPO_DIR}"
-echo "[R1Q1] Output base: ${OUT_BASE}"
-echo "[R1Q1] MODELS: ${MODELS[*]}"
-echo "[R1Q1] NQ=${NQ}, ES_VAL_GROUPS=${ES_VAL_GROUPS}, ES_VAL_GROUP_SIZE=${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
+echo "[R1Q2] Repo: ${REPO_DIR}"
+echo "[R1Q2] Output base: ${OUT_BASE}"
+echo "[R1Q2] MODELS: ${MODELS[*]}"
+echo "[R1Q2] NQ=${NQ}, ES_VAL_GROUPS=${ES_VAL_GROUPS}, ES_VAL_GROUP_SIZE=${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 
 summarize_accuracy() {
   local rollout_path="$1"
@@ -99,27 +83,40 @@ print(json.dumps({
 PY
 }
 
-for model in "${MODELS[@]}"; do
+# Run one experiment for a given model, time budget (in hours), and max turn
+run_for_hours() {
+  local model="$1"
+  local hours="$2"
+  local turn="$3"
+  local model_safe h_safe out_dir rollout_path
   model_safe="$(echo "${model}" | sed 's|/|-|g')"
-  out_dir="${OUT_BASE}/${model_safe}"
+  h_safe="$(echo "${hours}" | sed 's|\.|p|g')"
+  out_dir="${OUT_BASE}/${model_safe}/T${h_safe}h_turn_${turn}"
   mkdir -p "${out_dir}"
+  rollout_path="${out_dir}/rollouts.pkl"
 
-  # Unique WandB run names
+  local ts run_name eval_name minutes timeout_spec
   ts="$(date +%Y%m%d_%H%M%S)"
-  run_name="r1q1_${model_safe}_NQ${NQ}_${ts}"
+  run_name="r1q2_${model_safe}_T${h_safe}h_turn${turn}_NQ${NQ}_${ts}"
   eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
 
-  echo "[R1Q1][Train] model=${model}, NQ=${NQ}"
+  minutes="$(${PYTHON_BIN} - <<PY
+h=float("${hours}")
+print(int(round(h*60)))
+PY
+)"
+  timeout_spec="${minutes}m"
+
+  echo "[R1Q2][Train] model=${model}, NQ=${NQ}, time_budget=${hours}h (${timeout_spec}), turn=${turn}"
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
-  ${PYTHON_BIN} train.py \
+  timeout "${timeout_spec}" ${PYTHON_BIN} train.py \
     trainer.experiment_name="${run_name}" \
     model_path="${model}" \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.val.env_configs.tags=[MetamathQA] \
-    custom_envs.MetamathQA.env_config.multi_question_mode=true \
     custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
     custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
-    actor_rollout_ref.actor.checkpoint.save_contents=[hf_model]
+    actor_rollout_ref.actor.checkpoint.save_contents=[hf_model] || true
 
   LATEST_TRACKER="$(ls -t checkpoints/*/*/latest_checkpointed_iteration.txt 2>/dev/null | head -n1 || true)"
   HF_DIR=""
@@ -129,41 +126,54 @@ for model in "${MODELS[@]}"; do
     HF_DIR="${CKPT_DIR}/global_step_${last_step}/actor/huggingface"
   fi
   if [[ -z "${HF_DIR}" || ! -d "${HF_DIR}" ]]; then
-    echo "[R1Q1][WARN] HF weights not found, falling back to original model: ${model}"
+    echo "[R1Q2][WARN] HF weights not found, falling back to original model: ${model}"
     HF_DIR="${model}"
   fi
 
-  echo "[R1Q1][Eval] model=${HF_DIR}, NQ=${NQ}"
+  echo "[R1Q2][Eval] model=${HF_DIR}, NQ=${NQ}, time_budget=${hours}h, turn=${turn}"
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
     trainer.experiment_name="${eval_name}" \
     actor_rollout_ref.model.path="${HF_DIR}" \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.train.env_configs.n_groups=[1] \
-    es_manager.val.env_configs.tags=${TAGS_LIST} \
-    es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
-    es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
+    es_manager.val.env_configs.tags=[MetamathQA] \
+    es_manager.val.env_configs.n_groups=[${ES_VAL_GROUPS}] \
+    es_manager.val.env_groups=${ES_VAL_GROUPS} \
     es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
     custom_envs.MetamathQA.env_config.multi_question_mode=false \
     custom_envs.MetamathQA.env_config.n_questions_per_episode=1 \
     custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
-    agent_proxy.max_turn=${MAX_TURN} \
+    agent_proxy.max_turn=${turn} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=false \
     output.dir="${out_dir}" \
     output.filename="rollouts.pkl" \
     output.append_timestamp=false \
     trainer.logger=[console]
 
-  rollout_path="${out_dir}/rollouts.pkl"
   if [[ -f "${rollout_path}" ]]; then
     summary_json="$(summarize_accuracy "${rollout_path}")"
-    echo "[R1Q1] Summary: ${summary_json}"
+    echo "[R1Q2] Summary (T=${hours}h, turn=${turn}): ${summary_json}"
     echo "${summary_json}" > "${out_dir}/summary.json"
   else
-    echo "[R1Q1][WARN] Missing rollout at ${rollout_path}"
+    echo "[R1Q2][WARN] Missing rollout at ${rollout_path}"
   fi
-done
+}
+
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "0.5" "1"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "0.5" "5"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "1.0" "1"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "1.0" "5"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "1.5" "1"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "1.5" "5"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "2.0" "1"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "2.0" "5"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "2.5" "1"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "2.5" "5"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "3.0" "1"
+run_for_hours "Qwen/Qwen2.5-3B-Instruct" "3.0" "5"
 
 echo "[All Done] Results under: ${OUT_BASE}"
+
 
 
