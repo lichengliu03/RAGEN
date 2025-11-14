@@ -35,13 +35,15 @@ OUT_BASE="${REPO_DIR}/result/eval/r1w2_lambda"
 mkdir -p "${OUT_BASE}"
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
 
+WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
+
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
   echo "lambda,model,gamma,avg_reward,MetamathQA/success,MetamathQA/pass@${ES_VAL_GROUP_SIZE},MetamathQA/num_actions,MetamathQA/rep_distinct_fraction,MetamathQA/rep_penalty" > "${SUMMARY_CSV}"
 fi
 
 echo "[Lambda-Sens] Repo: ${REPO_DIR}"
 echo "[Lambda-Sens] Output base: ${OUT_BASE}"
-echo "[Lambda-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}"
+echo "[Lambda-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 echo "[Lambda-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
 echo "[Lambda-Sens] GAMMA=${GAMMA}"
 echo "[Lambda-Sens] This script will run 10 experiments (2 models x 5 lambdas)."
@@ -107,6 +109,11 @@ run_lambda() {
     mkdir -p "${out_dir}"
   rollout_path="${out_dir}/rollouts.pkl"
 
+  local ts run_name eval_name
+  ts="$(date +%Y%m%d_%H%M%S)"
+  run_name="r1w2_lambda_${model_safe}_l${lambda_val}_g${GAMMA}_${ts}"
+  eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
+
   if [[ -f "${rollout_path}" ]]; then
     echo "[Lambda-Sens] Rollout exists, skip train/eval: model=${model}, lambda=${lambda_val}, gamma=${GAMMA}"
   else
@@ -114,7 +121,9 @@ run_lambda() {
     # 1) Light training -> save HF weights
     # -------------------
     echo "[Lambda-Sens][Train] model=${model}, lambda=${lambda_val}, gamma=${GAMMA} (following base.yaml training settings)"
+    WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
     ${PYTHON_BIN} train.py \
+      trainer.experiment_name="${run_name}" \
       model_path="${model}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
@@ -139,7 +148,9 @@ run_lambda() {
     # 2) Evaluation
     # -------------------
     echo "[Lambda-Sens][Eval] model=${HF_DIR}, lambda=${lambda_val}, gamma=${GAMMA}"
+    WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
     ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
+      trainer.experiment_name="${eval_name}" \
       actor_rollout_ref.model.path="${HF_DIR}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \

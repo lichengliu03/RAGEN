@@ -40,13 +40,15 @@ cd "${REPO_DIR}"
 OUT_BASE="${REPO_DIR}/result/eval/r1w1"
 mkdir -p "${OUT_BASE}"
 
+WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
+
 # Eval scale (can override via env)
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 echo "[Eval] Repo: ${REPO_DIR}"
 echo "[Eval] Output base: ${OUT_BASE}"
-echo "[Eval] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}"
+echo "[Eval] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 
 run_eval_for_model() {
   local model_path="$1"
@@ -60,8 +62,13 @@ run_eval_for_model() {
 
   # Use the eval entry that does NOT train; override env to MetaMathQA
   # Force single turn for MetaMathQA
+  local ts run_name
+  ts="$(date +%Y%m%d_%H%M%S)"
+  run_name="r1w1_${model_safe}_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}_${ts}"
   if [[ ! -f "${out_dir}/rollouts.pkl" ]]; then
+    WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
     ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
+      trainer.experiment_name="${run_name}" \
       actor_rollout_ref.model.path="${model_path}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \

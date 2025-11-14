@@ -33,13 +33,15 @@ OUT_BASE="${REPO_DIR}/result/eval/r1w2_gamma"
 mkdir -p "${OUT_BASE}"
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
 
+WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
+
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
   echo "gamma,model,avg_reward,MetamathQA/success,MetamathQA/pass@${ES_VAL_GROUP_SIZE},MetamathQA/num_actions" > "${SUMMARY_CSV}"
 fi
 
 echo "[Gamma-Sens] Repo: ${REPO_DIR}"
 echo "[Gamma-Sens] Output base: ${OUT_BASE}"
-echo "[Gamma-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}"
+echo "[Gamma-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 echo "[Gamma-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
 echo "[Gamma-Sens] This script will run 10 experiments (2 models x 5 gammas)."
 
@@ -94,6 +96,11 @@ run_gamma() {
   mkdir -p "${out_dir}"
   rollout_path="${out_dir}/rollouts.pkl"
 
+  local ts run_name eval_name
+  ts="$(date +%Y%m%d_%H%M%S)"
+  run_name="r1w2_gamma_${model_safe}_g${gamma}_${ts}"
+  eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
+
   if [[ -f "${rollout_path}" ]]; then
     echo "[Gamma-Sens] Rollout exists, skip train/eval: model=${model}, gamma=${gamma}"
   else
@@ -101,7 +108,9 @@ run_gamma() {
     # 1) Light training -> save HF weights
     # -------------------
     echo "[Gamma-Sens][Train] model=${model}, gamma=${gamma} (following base.yaml training settings)"
+    WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
     ${PYTHON_BIN} train.py \
+      trainer.experiment_name="${run_name}" \
       model_path="${model}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
@@ -125,7 +134,9 @@ run_gamma() {
     # 2) Evaluation
     # -------------------
     echo "[Gamma-Sens][Eval] model=${HF_DIR}, gamma=${gamma}"
+    WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
     ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
+      trainer.experiment_name="${eval_name}" \
       actor_rollout_ref.model.path="${HF_DIR}" \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \

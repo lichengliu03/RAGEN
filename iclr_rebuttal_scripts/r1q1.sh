@@ -39,10 +39,12 @@ MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-4}"
 OUT_BASE="${REPO_DIR}/result/eval/r1q1"
 mkdir -p "${OUT_BASE}"
 
+WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
+
 echo "[R1Q1] Repo: ${REPO_DIR}"
 echo "[R1Q1] Output base: ${OUT_BASE}"
 echo "[R1Q1] MODELS: ${MODELS[*]}"
-echo "[R1Q1] NQ=${NQ}, ES_VAL_GROUPS=${ES_VAL_GROUPS}, ES_VAL_GROUP_SIZE=${ES_VAL_GROUP_SIZE}"
+echo "[R1Q1] NQ=${NQ}, ES_VAL_GROUPS=${ES_VAL_GROUPS}, ES_VAL_GROUP_SIZE=${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 
 summarize_accuracy() {
   local rollout_path="$1"
@@ -86,8 +88,15 @@ for model in "${MODELS[@]}"; do
   out_dir="${OUT_BASE}/${model_safe}"
   mkdir -p "${out_dir}"
 
+  # Unique WandB run names
+  ts="$(date +%Y%m%d_%H%M%S)"
+  run_name="r1q1_${model_safe}_NQ${NQ}_${ts}"
+  eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
+
   echo "[R1Q1][Train] model=${model}, NQ=${NQ}"
+  WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
   ${PYTHON_BIN} train.py \
+    trainer.experiment_name="${run_name}" \
     model_path="${model}" \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.val.env_configs.tags=[MetamathQA] \
@@ -109,7 +118,9 @@ for model in "${MODELS[@]}"; do
   fi
 
   echo "[R1Q1][Eval] model=${HF_DIR}, NQ=${NQ}"
+  WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
+    trainer.experiment_name="${eval_name}" \
     actor_rollout_ref.model.path="${HF_DIR}" \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.train.env_configs.n_groups=[1] \
