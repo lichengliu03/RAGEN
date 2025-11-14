@@ -37,6 +37,17 @@ print_step() {
 
 # Main installation process
 main() {
+    # Initialize conda in non-interactive shells
+    { source ~/.bashrc >/dev/null 2>&1 || true; } || true
+    if ! command -v conda &> /dev/null; then
+        for conda_sh in "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh" "$HOME/mambaforge/etc/profile.d/conda.sh"; do
+            if [ -f "$conda_sh" ]; then
+                # shellcheck disable=SC1090
+                source "$conda_sh"
+                break
+            fi
+        done
+    fi
     # Check prerequisites
     check_conda || exit 1
     
@@ -77,7 +88,7 @@ main() {
             print_step "Found NVCC version: $nvcc_version"
             
             if [[ "$nvcc_major" -gt 12 || ("$nvcc_major" -eq 12 && "$nvcc_minor" -ge 1) ]]; then
-                print_step "CUDA $nvcc_version is already installed and meets requirements (>=12.4)"
+                print_step "CUDA $nvcc_version is already installed and meets requirements (>=12.1)"
                 export CUDA_HOME=${CUDA_HOME:-$(dirname $(dirname $(which nvcc)))}
             else
                 print_step "CUDA version < 12.4, installing CUDA toolkit 12.4..."
@@ -116,25 +127,16 @@ main() {
     # installing webshop
     print_step "Installing webshop dependencies..."
     conda install -c pytorch faiss-cpu -y
-    sudo apt update
-    sudo apt install default-jdk -y
     conda install -c conda-forge openjdk=21 maven -y
-
-    # Install remaining requirements
-    print_step "Installing additional requirements..."
-    pip install -r requirements.txt
 
     # webshop installation, model loading
     pip install -e external/webshop-minimal/ --no-dependencies
     python -m spacy download en_core_web_sm
     python -m spacy download en_core_web_lg
 
-    print_step "Downloading data..."
-    python scripts/download_data.py
-
     # Optional: download full data set
     print_step "Downloading full data set..."
-    conda install conda-forge::gdown
+    conda install conda-forge::gdown -y
     mkdir -p external/webshop-minimal/webshop_minimal/data/full
     cd external/webshop-minimal/webshop_minimal/data/full
     gdown https://drive.google.com/uc?id=1A2whVgOO0euk5O13n2iYDM0bQRkkRduB # items_shuffle
