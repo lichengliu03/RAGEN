@@ -21,6 +21,8 @@ cd "${REPO_DIR}"
 { source ~/.bashrc >/dev/null 2>&1 || true; } || true
 [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
+
+eval "$(conda shell.bash hook)"
 conda activate ragen || true
 
 MODELS_DEFAULT=("LichengLiu03/Qwen2.5-3B-UFO")
@@ -116,8 +118,8 @@ for model in "${MODELS[@]}"; do
     model_path="${model}" \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.val.env_configs.tags=[MetamathQA] \
-    custom_envs.MetamathQA.env_config.multi_question_mode=true \
-    custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
+    +custom_envs.MetamathQA.env_config.multi_question_mode=true \
+    +custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
     custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
     actor_rollout_ref.actor.checkpoint.save_contents=[hf_model]
 
@@ -144,8 +146,8 @@ for model in "${MODELS[@]}"; do
     es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
     es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
     es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
-    custom_envs.MetamathQA.env_config.multi_question_mode=false \
-    custom_envs.MetamathQA.env_config.n_questions_per_episode=1 \
+    +custom_envs.MetamathQA.env_config.multi_question_mode=false \
+    +custom_envs.MetamathQA.env_config.n_questions_per_episode=1 \
     custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
     agent_proxy.max_turn=${MAX_TURN} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=false \

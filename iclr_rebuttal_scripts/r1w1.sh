@@ -12,6 +12,9 @@
 #SBATCH -e slurm-%x-%j.err
 set -euo pipefail
 
+eval "$(conda shell.bash hook)"
+conda activate ragen || true
+
 # Eval-only on MetaMathQA for two models, then ask gpt-4o for fuzzy feedback
 # Models:
 #   - LichengLiu03/Qwen2.5-3B-UFO

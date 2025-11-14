@@ -21,7 +21,9 @@ cd "${REPO_DIR}"
 { source ~/.bashrc >/dev/null 2>&1 || true; } || true
 [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
+
 conda activate ragen || true
+eval "$(conda shell.bash hook)"
 
 GAMMA="${GAMMA:-1.0}"
 
