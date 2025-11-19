@@ -28,7 +28,7 @@ actor_rollout_ref:
     log_prob_micro_batch_size_per_gpu: ${micro_batch_size_per_gpu}
     tensor_model_parallel_size: 1
     dtype: bfloat16
-    max_model_len: 3600
+    max_model_len: 8192
     prompt_length: 1
     response_length: 400
     gpu_memory_utilization: 0.9
@@ -48,7 +48,7 @@ agent_proxy:
   max_context_window: -1
   max_turn: 5
   action_sep: "||"
-  max_actions_per_turn: 2
+  max_actions_per_turn: 5
   use_turn_scores: False
   enable_think: True
   reward_normalization:
@@ -61,14 +61,14 @@ es_manager:
     env_groups: 8
     group_size: 16
     env_configs:
-      tags: ["CoordSokoban"]
+      tags: ["MetamathQA"]
       n_groups: [8]
   val:
-    env_groups: 32
-    group_size: 16
+    env_groups: 128
+    group_size: 1
     env_configs:
-      tags: ["CoordSokoban"]
-      n_groups: [32]
+      tags: ["MetamathQA"]
+      n_groups: [128]
 
 ctx_manager:
   generation:

@@ -12,10 +12,9 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
         super(MetaMathQAEnv, self).__init__()
         
         self.config = config
-        self.dataset = load_dataset(path=self.config.dataset_path, cache_dir=self.config.cache_dir)
-        self.dataset = self.dataset[self.config.split].filter(
-            lambda example: example['type'].startswith('MATH_')
-        )
+        raw_dataset = load_dataset(path=self.config.dataset_path, cache_dir=self.config.cache_dir)
+        split_dataset = raw_dataset[self.config.split]
+        self.dataset = split_dataset.filter(lambda example: example['type'].startswith('MATH_'))
         self.current_question_idx = None
         self.current_question = None
         self.correct_answer = None
@@ -38,9 +37,8 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
         return None
     
     def _load_question_by_index(self, idx: int):
-        dataset = self.dataset[self.config.split]
         self.current_question_idx = idx
-        question_data = dataset[self.current_question_idx]
+        question_data = self.dataset[self.current_question_idx]
         self.current_question = question_data['query']
         self.correct_answer = self._extract_answer(question_data['response'])
     
@@ -54,10 +52,9 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
         
     def reset(self,seed=None, mode=None):
         if not self.config.multi_question_mode:
-            dataset = self.dataset[self.config.split]
             with all_seed(seed):
-                self.current_question_idx = random.randint(0, len(dataset) - 1)
-            question_data = dataset[self.current_question_idx]
+                self.current_question_idx = random.randint(0, len(self.dataset) - 1)
+            question_data = self.dataset[self.current_question_idx]
             self.current_question = question_data['query']
             self.correct_answer = self._extract_answer(question_data['response'])
             self.step_num = 0
@@ -66,8 +63,7 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
             self._attempt_distinct = set()
             return self.render_cache
         else:
-            dataset = self.dataset[self.config.split]
-            n_total = len(dataset)
+            n_total = len(self.dataset)
             nq = max(1, int(self.config.n_questions_per_episode))
             with all_seed(seed):
                 if nq <= n_total:
