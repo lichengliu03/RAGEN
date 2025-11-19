@@ -165,6 +165,7 @@ PY
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
   timeout "${timeout_spec}" ${PYTHON_BIN} train.py \
     trainer.experiment_name="${run_name}" \
+    trainer.project_name="${WANDB_PROJECT}" \
     model_path="${model}" \
     system.CUDA_VISIBLE_DEVICES="${HYDRA_VISIBLE_DEVICES}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
@@ -186,6 +187,7 @@ PY
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
     trainer.experiment_name="${eval_name}" \
+    trainer.project_name="${WANDB_PROJECT}" \
     actor_rollout_ref.model.path="${hf_dir}" \
     system.CUDA_VISIBLE_DEVICES="${HYDRA_VISIBLE_DEVICES}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
