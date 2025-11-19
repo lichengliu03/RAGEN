@@ -12,7 +12,10 @@
 #SBATCH -e slurm-%x-%j.err
 set -euo pipefail
 
-DEVICES=\"0,1,2,3,4,5,6,7\"
+DEVICES="${DEVICES:-0,1}"
+GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
+GPUS_PER_NODE=$((GPUS_PER_NODE))
+HYDRA_CUDA_VISIBLE_DEVICES="'${DEVICES}'"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -132,10 +135,11 @@ run_gamma() {
     WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
     ${PYTHON_BIN} train.py \
       trainer.experiment_name="${run_name}" \
+      trainer.project_name="${WANDB_PROJECT}" \
       model_path="${model}" \
-      system.CUDA_VISIBLE_DEVICES="${DEVICES}" \
-      trainer.n_gpus_per_node=8 \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
+      system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
+      trainer.n_gpus_per_node=${GPUS_PER_NODE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
       custom_envs.MetamathQA.env_config.gamma=${gamma} \
@@ -161,10 +165,11 @@ run_gamma() {
     WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
     ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
       trainer.experiment_name="${eval_name}" \
+      trainer.project_name="${WANDB_PROJECT}" \
       actor_rollout_ref.model.path="${HF_DIR}" \
-      system.CUDA_VISIBLE_DEVICES="${DEVICES}" \
-      trainer.n_gpus_per_node=8 \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
+      system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
+      trainer.n_gpus_per_node=${GPUS_PER_NODE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \
       es_manager.val.env_configs.tags=${TAGS_LIST} \

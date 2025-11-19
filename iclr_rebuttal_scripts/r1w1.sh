@@ -1,41 +1,15 @@
 #!/usr/bin/env bash
 
-#SBATCH -J r1w1
-#SBATCH -N 1
-#SBATCH --partition=gpuH200x8-interactive
-#SBATCH --account=bfea-delta-gpu
-#SBATCH --gres=gpu:h200:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
-#SBATCH -t 01:00:00
-#SBATCH -o slurm-%x-%j.out
-#SBATCH -e slurm-%x-%j.err
 set -euo pipefail
 
-DEVICES=\"0,1,2,3,4,5,6,7\"
+DEVICES="${DEVICES:-0,1}"
+GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
+GPUS_PER_NODE=$((GPUS_PER_NODE))
+HYDRA_CUDA_VISIBLE_DEVICES="'${DEVICES}'"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
 
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
-
-# Eval-only on MetaMathQA for two models, then ask gpt-4o for fuzzy feedback
-# Models:
-#   - LichengLiu03/Qwen2.5-3B-UFO
-#   - LichengLiu03/Qwen2.5-3B-UFO-1turn
-#
-# Requirements:
-#   - Python env with repo dependencies installed (vllm, transformers, hydra, verl, datasets, openai)
-#   - OPENAI_API_KEY set (for feedback stage)
-#   - GPU recommended for vLLM
-#
-# Usage:
-#   bash scripts/eval_metamathqa_ufo.sh
-#   ES_VAL_GROUPS=128 ES_VAL_GROUP_SIZE=1 CUDA_VISIBLE_DEVICES=0 bash scripts/eval_metamathqa_ufo.sh
-#
-# Notes:
-#   - Outputs:
-#       result/eval/rebuttal/<model-sanitized>/rollouts.pkl
-#       result/eval/rebuttal/<model-sanitized>/feedback_gpt4o.jsonl
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -67,6 +41,8 @@ make_repeat_list() {
 VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
 TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
 TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
+SUMMARY_DATASETS="MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro"
+SUMMARY_KEYS="success,pass@1,num_actions"
 
 echo "[Eval] Repo: ${REPO_DIR}"
 echo "[Eval] Output base: ${OUT_BASE}"
@@ -77,6 +53,7 @@ run_eval_for_model() {
   local model_safe
   model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
   local out_dir="${OUT_BASE}/${model_safe}"
+  local rollout_path="${out_dir}/rollouts.pkl"
   mkdir -p "${out_dir}"
 
   echo "[Eval] Running eval for model: ${model_path}"
@@ -87,30 +64,85 @@ run_eval_for_model() {
   local ts run_name
   ts="$(date +%Y%m%d_%H%M%S)"
   run_name="r1w1_${model_safe}_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}_${ts}"
-  if [[ ! -f "${out_dir}/rollouts.pkl" ]]; then
-    WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
-    ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
-      trainer.experiment_name="${run_name}" \
-      actor_rollout_ref.model.path="${model_path}" \
-      system.CUDA_VISIBLE_DEVICES="${DEVICES}" \
-      trainer.n_gpus_per_node=8 \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
-      es_manager.train.env_configs.tags=[MetamathQA] \
-      es_manager.val.env_configs.tags=${TAGS_LIST} \
-      es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
-      es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
-      es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
-      agent_proxy.max_turn=1 \
-      output.dir="${out_dir}" \
-      output.filename="rollouts.pkl" \
-      output.append_timestamp=false \
-      trainer.logger=[console] \
-      actor_rollout_ref.rollout.val_kwargs.do_sample=false
+  WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
+  ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
+    trainer.experiment_name="${run_name}" \
+    trainer.project_name="${WANDB_PROJECT}" \
+    actor_rollout_ref.model.path="${model_path}" \
+    system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
+    trainer.n_gpus_per_node=${GPUS_PER_NODE} \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
+    es_manager.train.env_configs.tags=[MetamathQA] \
+    es_manager.val.env_configs.tags=${TAGS_LIST} \
+    es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
+    es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
+    es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
+    agent_proxy.max_turn=1 \
+    output.dir="${out_dir}" \
+    output.filename="rollouts.pkl" \
+    output.append_timestamp=false \
+    trainer.logger=[console] \
+    actor_rollout_ref.rollout.val_kwargs.do_sample=false
+
+  if [[ -f "${rollout_path}" ]]; then
+    echo "[Eval] Rollout generated: ${rollout_path}"
   else
-    echo "[Eval] Skip existing rollouts: ${out_dir}/rollouts.pkl"
+    echo "[Eval][ERROR] Missing rollout at ${rollout_path}"
+    return 1
+  fi
+}
+
+summarize_metrics_for_model() {
+  local model_path="$1"
+  local model_safe
+  model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
+  local out_dir="${OUT_BASE}/${model_safe}"
+  local rollout_path="${out_dir}/rollouts.pkl"
+  local summary_path="${out_dir}/summary.json"
+
+  if [[ ! -f "${rollout_path}" ]]; then
+    echo "[Summary] Rollout not found: ${rollout_path}"
+    return 1
   fi
 
-  echo "[Eval] Saved: ${out_dir}/rollouts.pkl"
+  ROLLOUT_PATH="${rollout_path}" SUMMARY_PATH="${summary_path}" \
+  SUMMARY_DATASETS="${SUMMARY_DATASETS}" SUMMARY_KEYS="${SUMMARY_KEYS}" \
+  ${PYTHON_BIN} - <<'PY'
+import json, os
+from pathlib import Path
+from verl import DataProto
+
+rollout_path = Path(os.environ["ROLLOUT_PATH"])
+summary_path = Path(os.environ["SUMMARY_PATH"])
+datasets = [name.strip() for name in os.environ.get("SUMMARY_DATASETS", "").split(",") if name.strip()]
+keys = [name.strip() for name in os.environ.get("SUMMARY_KEYS", "").split(",") if name.strip()]
+
+metrics = DataProto.load_from_disk(str(rollout_path)).meta_info.get("metrics", {})
+summary = {}
+for dataset in datasets:
+    entry = {}
+    for key in keys:
+        metric_key = f"{dataset}/{key}"
+        value = metrics.get(metric_key)
+        entry[key] = float(value) if value is not None else None
+    summary[dataset] = entry
+
+summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+print(f"[Summary] Wrote metrics to {summary_path}")
+PY
+}
+
+cleanup_rollout_for_model() {
+  local model_path="$1"
+  local model_safe
+  model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
+  local out_dir="${OUT_BASE}/${model_safe}"
+  local rollout_path="${out_dir}/rollouts.pkl"
+
+  if [[ -f "${rollout_path}" ]]; then
+    rm -f "${rollout_path}"
+    echo "[Cleanup] Removed rollout: ${rollout_path}"
+  fi
 }
 
 generate_fuzzy_feedback() {
@@ -145,7 +177,7 @@ from openai import OpenAI
 from verl import DataProto
 
 repo_dir = Path(os.environ.get("REPO_DIR", ".")).resolve()
-out_base = repo_dir / "result" / "eval" / "rebuttal"
+out_base = Path(os.environ.get("OUT_BASE", str(repo_dir / "result" / "eval" / "rebuttal"))).resolve()
 model_path = os.environ["MODEL_PATH"]
 model_safe = model_path.replace("/", "-")
 run_dir = out_base / model_safe
@@ -213,13 +245,31 @@ print(f"[Feedback] Done: {feedback_path}")
 PY
 }
 
+run_model_pipeline() {
+  local model_path="$1"
+  local model_safe
+  model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
+  local summary_path="${OUT_BASE}/${model_safe}/summary.json"
+
+  if [[ -f "${summary_path}" ]]; then
+    echo "[Eval] Summary exists, skip pipeline: ${summary_path}"
+    return 0
+  fi
+
+  echo "[Eval] ===== Model: ${model_path} ====="
+  run_eval_for_model "${model_path}"
+  summarize_metrics_for_model "${model_path}"
+  MODEL_PATH="${model_path}" generate_fuzzy_feedback "${model_path}"
+  cleanup_rollout_for_model "${model_path}"
+  echo "[Eval] ===== Done: ${model_path} ====="
+  echo
+}
+
 # Export REPO_DIR for the Python snippet
 export REPO_DIR="${REPO_DIR}"
+export OUT_BASE="${OUT_BASE}"
 
-run_eval_for_model "LichengLiu03/Qwen2.5-3B-UFO"
-MODEL_PATH="LichengLiu03/Qwen2.5-3B-UFO" generate_fuzzy_feedback "LichengLiu03/Qwen2.5-3B-UFO"
-
-run_eval_for_model "LichengLiu03/Qwen2.5-3B-UFO-1turn"
-MODEL_PATH="LichengLiu03/Qwen2.5-3B-UFO-1turn" generate_fuzzy_feedback "LichengLiu03/Qwen2.5-3B-UFO-1turn"
+run_model_pipeline "LichengLiu03/Qwen2.5-3B-UFO"
+run_model_pipeline "LichengLiu03/Qwen2.5-3B-UFO-1turn"
 
 echo "[All Done] Results under: ${OUT_BASE}"
