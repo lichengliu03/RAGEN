@@ -581,9 +581,27 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                             last_val_metrics = val_metrics
                     metrics.update(val_metrics)
 
+                # Save checkpoint based on steps
                 if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
                     with marked_timer("save_checkpoint", timing_raw):
                         self._save_checkpoint()
+
+                # Save checkpoint based on time
+                save_interval_hours = float(os.environ.get("RAGEN_SAVE_INTERVAL_HOURS", "0"))
+                if save_interval_hours > 0:
+                    elapsed_hours = (time.time() - self.start_time) / 3600.0
+                    # We want to save at 0.5, 1.0, 1.5...
+                    # milestone 1 means we passed 0.5h (if interval=0.5)
+                    milestone = int(elapsed_hours / save_interval_hours)
+                    
+                    if not hasattr(self, "saved_time_milestones"):
+                        self.saved_time_milestones = set()
+
+                    if milestone > 0 and milestone not in self.saved_time_milestones:
+                        print(f"[AgentTrainer] Time-based checkpoint trigger: elapsed {elapsed_hours:.2f}h, milestone {milestone} (interval {save_interval_hours}h)")
+                        with marked_timer("save_checkpoint", timing_raw):
+                            self._save_checkpoint()
+                        self.saved_time_milestones.add(milestone)
 
             # collect metrics
             metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))

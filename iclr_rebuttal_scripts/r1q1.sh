@@ -3,7 +3,8 @@
 set -euo pipefail
 
 # ====== 基础配置 ======
-DEVICES="${DEVICES:-0,1}"
+# DEVICES="${DEVICES:-0,1}"
+DEVICES="1"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
 HYDRA_VISIBLE_DEVICES="'${DEVICES}'"
 GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
@@ -22,7 +23,8 @@ eval "$(conda shell.bash hook)"
 conda activate ragen || true
 
 # ====== 模型与任务参数 ======
-DEFAULT_MODEL="Qwen/Qwen2.5-3B-Instruct"
+# DEFAULT_MODEL="Qwen/Qwen2.5-3B-Instruct"
+DEFAULT_MODEL="Qwen/Qwen2.5-1.5B-Instruct"
 MODELS_ENV="${MODELS:-}"
 if [[ -n "${MODELS_ENV}" ]]; then
   IFS=' ' read -r -a MODELS <<< "${MODELS_ENV}"
@@ -37,7 +39,7 @@ MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
 
 # 评估标签与采样规模
 VAL_TAGS="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 repeat_value_list() {
   local value="$1" repeat="$2"
@@ -150,8 +152,8 @@ run_train() {
     actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.val.env_configs.tags=[MetamathQA] \
-    +custom_envs.MetamathQA.env_config.multi_question_mode=true \
-    +custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
+    ++custom_envs.MetamathQA.env_config.multi_question_mode=true \
+    ++custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
     custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
     actor_rollout_ref.actor.checkpoint.save_contents=[hf_model]
 }
@@ -176,8 +178,9 @@ run_eval() {
     es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
     es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
     es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
-    +custom_envs.MetamathQA.env_config.multi_question_mode=false \
-    +custom_envs.MetamathQA.env_config.n_questions_per_episode=1 \
+    ++custom_envs.MetamathQA.env_config.multi_question_mode=true \
+    ++custom_envs.MetamathQA.env_config.n_questions_per_episode=${NQ} \
+    ++actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
     agent_proxy.max_turn=${MAX_TURN} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=false \
