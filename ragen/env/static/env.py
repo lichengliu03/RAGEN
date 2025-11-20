@@ -64,6 +64,16 @@ class StaticEnv(BaseLanguageBasedEnv):
             done = True
         else:
             observation = "Incorrect. Please think again."
+            # If GPT feedback is enabled, override the default observation
+            try:
+                from ragen.utils.gpt_feedback import get_fuzzy_feedback
+                import os
+                if os.environ.get("ENABLE_GPT_FEEDBACK", "0") == "1":
+                    gpt_obs = get_fuzzy_feedback(self.current_question, action)
+                    if gpt_obs:
+                        observation = gpt_obs
+            except:
+                pass
             done = False
             
         self.step_num += 1

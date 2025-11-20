@@ -23,7 +23,7 @@ mkdir -p "${OUT_BASE}"
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 # Eval scale (can override via env)
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 # Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
@@ -65,6 +65,7 @@ run_eval_for_model() {
   ts="$(date +%Y%m%d_%H%M%S)"
   run_name="r1w1_${model_safe}_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}_${ts}"
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
+  ENABLE_GPT_FEEDBACK=1 \
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
     trainer.experiment_name="${run_name}" \
     trainer.project_name="${WANDB_PROJECT}" \
@@ -79,7 +80,7 @@ run_eval_for_model() {
     es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
     es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
     es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
-    agent_proxy.max_turn=1 \
+    agent_proxy.max_turn=5 \
     output.dir="${out_dir}" \
     output.filename="rollouts.pkl" \
     output.append_timestamp=false \
@@ -242,7 +243,7 @@ with open(feedback_path, "w", encoding="utf-8") as fw:
             "model": model_path,
         }
         fw.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
+dan shi na ge wen jian 
 print(f"[Feedback] Done: {feedback_path}")
 PY
 }
@@ -261,8 +262,8 @@ run_model_pipeline() {
   echo "[Eval] ===== Model: ${model_path} ====="
   run_eval_for_model "${model_path}"
   summarize_metrics_for_model "${model_path}"
-  MODEL_PATH="${model_path}" generate_fuzzy_feedback "${model_path}"
-  cleanup_rollout_for_model "${model_path}"
+  # MODEL_PATH="${model_path}" generate_fuzzy_feedback "${model_path}"
+  # cleanup_rollout_for_model "${model_path}"
   echo "[Eval] ===== Done: ${model_path} ====="
   echo
 }
