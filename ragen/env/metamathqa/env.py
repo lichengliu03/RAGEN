@@ -104,11 +104,19 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
                 from ragen.utils.gpt_feedback import get_fuzzy_feedback
                 import os
                 if os.environ.get("ENABLE_GPT_FEEDBACK", "0") == "1":
+                    # print(f"[DEBUG] GPT feedback enabled. Fetching for Q: {self.current_question[:30]}...")
                     gpt_obs = get_fuzzy_feedback(self.current_question, action)
                     if gpt_obs:
                         observation = gpt_obs
-            except:
-                pass
+                    else:
+                        print("[DEBUG] GPT feedback returned empty.")
+                else:
+                    # print(f"[DEBUG] GPT feedback NOT enabled. Env var: {os.environ.get('ENABLE_GPT_FEEDBACK')}")
+                    pass
+            except ImportError as e:
+                print(f"[ERROR] Failed to import gpt_feedback: {e}")
+            except Exception as e:
+                print(f"[ERROR] Error getting GPT feedback: {e}")
             done = False
             self.step_num += 1
             info = {
