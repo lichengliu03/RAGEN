@@ -133,7 +133,11 @@ custom_envs:
     max_actions_per_traj: 5
     env_instruction: "You are solving Math problems. "
     max_tokens: 100
-    env_config: null
+    env_config:
+      gamma: 0.5
+      lambda_rep: 1.0
+      n_questions_per_episode: 1
+      multi_question_mode: false
   
   TheoremQA:
     env_type: static

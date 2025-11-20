@@ -96,7 +96,7 @@ trainer:
   save_freq: 100
   total_training_steps: 200
   validation_steps: 1 # validation instances = validation_steps * val_env_groups * group_size
-  val_before_train: False
+  val_before_train: True
   n_gpus_per_node: 1
   test_freq: 100
   generations_to_log_to_wandb: 
@@ -126,11 +126,11 @@ es_manager:
       tags: ["MetamathQA"]
       n_groups: [8] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   val:
-    env_groups: 128
+    env_groups: 8
     group_size: 1 # should be set to 1 because when val temperature is set to 0 and group size > 1, there will be repetitive prompts which leads to same trajectory.
     env_configs:
       tags: ["MetamathQA"]
-      n_groups: [128] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+      n_groups: [8] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
 
 ctx_manager:
   generation: # go to vllm

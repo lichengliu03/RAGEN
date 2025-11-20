@@ -73,6 +73,8 @@ run_eval_for_model() {
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
     es_manager.train.env_configs.tags=[MetamathQA] \
+    es_manager.train.env_configs.n_groups=[1] \
+    es_manager.train.env_groups=1 \
     es_manager.val.env_configs.tags=${TAGS_LIST} \
     es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
     es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \

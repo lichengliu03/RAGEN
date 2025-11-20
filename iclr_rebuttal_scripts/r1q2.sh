@@ -171,6 +171,7 @@ PY
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.save_freq=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
+    agent_proxy.max_turn=${turn} \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.val.env_configs.tags=[MetamathQA] \
     +custom_envs.MetamathQA.env_config.multi_question_mode=false \

@@ -1,15 +1,5 @@
 #!/usr/bin/env bash
 
-#SBATCH -J r1w2_gamma
-#SBATCH -N 1
-#SBATCH --partition=gpuH200x8-interactive
-#SBATCH --account=bfea-delta-gpu
-#SBATCH --gres=gpu:h200:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
-#SBATCH -t 01:00:00
-#SBATCH -o slurm-%x-%j.out
-#SBATCH -e slurm-%x-%j.err
 set -euo pipefail
 
 DEVICES="${DEVICES:-0,1}"
@@ -31,11 +21,11 @@ cd "${REPO_DIR}"
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
 
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-128}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 MAX_TURN="${MAX_TURN:-5}"
-MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-4}"
+MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
 
 # Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
 make_repeat_list() {
@@ -67,7 +57,7 @@ echo "[Gamma-Sens] Repo: ${REPO_DIR}"
 echo "[Gamma-Sens] Output base: ${OUT_BASE}"
 echo "[Gamma-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
 echo "[Gamma-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
-echo "[Gamma-Sens] This script will run 5 experiments (1 model x 5 gammas)."
+echo "[Gamma-Sens] This script will run 2 experiments (1 model x 2 gammas)."
 
 summarize_run() {
   local rollout_path="$1"
@@ -172,6 +162,7 @@ run_gamma() {
       actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \
+      es_manager.train.env_groups=1 \
       es_manager.val.env_configs.tags=${TAGS_LIST} \
       es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
       es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
@@ -203,9 +194,6 @@ run_gamma() {
 }
 
 run_gamma "Qwen/Qwen2.5-3B-Instruct" "1.0"
-run_gamma "Qwen/Qwen2.5-3B-Instruct" "0.75"
-run_gamma "Qwen/Qwen2.5-3B-Instruct" "0.5"
-run_gamma "Qwen/Qwen2.5-3B-Instruct" "0.25"
 run_gamma "Qwen/Qwen2.5-3B-Instruct" "0"
 
 echo "[All Done] Summary CSV: ${SUMMARY_CSV}"
