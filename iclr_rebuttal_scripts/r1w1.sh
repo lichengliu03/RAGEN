@@ -243,7 +243,6 @@ with open(feedback_path, "w", encoding="utf-8") as fw:
             "model": model_path,
         }
         fw.write(json.dumps(rec, ensure_ascii=False) + "\n")
-dan shi na ge wen jian 
 print(f"[Feedback] Done: {feedback_path}")
 PY
 }
