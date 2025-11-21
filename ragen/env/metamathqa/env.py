@@ -31,7 +31,6 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
         
     def _extract_answer(self, response):
         match = re.search(r"The answer is: (.*?)$", response, re.DOTALL)
-        print(response)
         if match:
             return match.group(1).strip()
         return None
