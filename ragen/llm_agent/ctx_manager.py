@@ -90,6 +90,8 @@ class ContextManager:
         """
         self.config = config
         self.tokenizer = tokenizer
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.processor = processor
         self.action_sep = self.config.agent_proxy.action_sep
         self.special_token_list = ["<think>", "</think>", "<answer>", "</answer>", "<|im_start|>", "<|im_end|>"]
@@ -313,6 +315,9 @@ class ContextManager:
             messages_list.append(messages)
 
         inputs = self.tokenizer(llm_input_texts, return_tensors="pt", padding=True, padding_side="left", truncation=False) # We have truncated previously, truncation in tokenizer may cause issues.
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         input_ids, attention_mask = inputs.input_ids, inputs.attention_mask
         position_ids = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0)
         if prepare_for_update:
