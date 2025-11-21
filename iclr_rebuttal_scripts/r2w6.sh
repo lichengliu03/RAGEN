@@ -311,6 +311,8 @@ PY
   fi
 }
 
+run_train_and_eval "Qwen/Qwen2.5-1.5B-Instruct" "1"
+run_train_and_eval "Qwen/Qwen2.5-1.5B-Instruct" "5"
 run_train_and_eval "meta-llama/Llama-3.2-3B-Instruct" "1"
 run_train_and_eval "meta-llama/Llama-3.2-3B-Instruct" "5"
 

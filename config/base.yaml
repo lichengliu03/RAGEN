@@ -96,7 +96,7 @@ trainer:
   save_freq: 100
   total_training_steps: 200
   validation_steps: 1 # validation instances = validation_steps * val_env_groups * group_size
-  val_before_train: True
+  val_before_train: False
   n_gpus_per_node: 1
   test_freq: 100
   generations_to_log_to_wandb: 

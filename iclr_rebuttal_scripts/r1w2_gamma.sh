@@ -25,6 +25,7 @@ set -u
 
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
+TRAIN_STEPS="${TRAIN_STEPS:-200}"
 
 MAX_TURN="${MAX_TURN:-5}"
 MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
@@ -69,7 +70,7 @@ fi
 echo "[Gamma-Sens] Repo: ${REPO_DIR}"
 echo "[Gamma-Sens] Output base: ${OUT_BASE}"
 echo "[Gamma-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
-echo "[Gamma-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
+echo "[Gamma-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}, TRAIN_STEPS=${TRAIN_STEPS}"
 echo "[Gamma-Sens] This script will run 2 experiments (1 model x 2 gammas)."
 
 summarize_run() {
@@ -166,6 +167,7 @@ run_gamma() {
   local model="$1"
   local gamma="$2"
   local model_safe out_dir rollout_path
+  local train_steps="${TRAIN_STEPS}"
   model_safe="$(echo "${model}" | sed 's|/|-|g')"
   out_dir="${OUT_BASE}/${model_safe}/gamma_${gamma}"
   mkdir -p "${out_dir}"
@@ -173,7 +175,7 @@ run_gamma() {
 
   local ts run_name eval_name
   ts="$(date +%Y%m%d_%H%M%S)"
-  run_name="r1w2_gamma_${model_safe}_g${gamma}_${ts}"
+  run_name="r1w2_gamma_${model_safe}_g${gamma}_s${train_steps}_${ts}"
   eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
 
   if [[ -f "${rollout_path}" ]]; then
@@ -182,7 +184,7 @@ run_gamma() {
     # -------------------
     # 1) Light training -> save HF weights
     # -------------------
-    echo "[Gamma-Sens][Train] model=${model}, gamma=${gamma} (following base.yaml training settings)"
+    echo "[Gamma-Sens][Train] model=${model}, gamma=${gamma}, steps=${train_steps} (following base.yaml training settings)"
     WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
     ${PYTHON_BIN} train.py \
       trainer.experiment_name="${run_name}" \
@@ -194,6 +196,7 @@ run_gamma() {
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
       custom_envs.MetamathQA.env_config.gamma=${gamma} \
+      trainer.total_training_steps=${train_steps} \
       actor_rollout_ref.actor.checkpoint.save_contents=[hf_model]
 
     # Parse latest HF weights directory (find the latest training under default checkpoints)
