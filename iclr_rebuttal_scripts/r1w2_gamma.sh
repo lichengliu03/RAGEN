@@ -43,7 +43,8 @@ VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
 TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
 TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
 
-OUT_BASE="${REPO_DIR}/result/eval/r1w2_gamma"
+OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
+OUT_BASE="${OUT_BASE}/result/eval/r1w2_gamma"
 mkdir -p "${OUT_BASE}"
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
 

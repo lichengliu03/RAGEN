@@ -17,8 +17,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_DIR}"
 
-OUT_BASE="${REPO_DIR}/result/eval/r1w1"
+OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
+OUT_BASE="${OUT_BASE}/result/eval/r1w1"
 mkdir -p "${OUT_BASE}"
+
+echo "OUT_BASE: ${OUT_BASE}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
