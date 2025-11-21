@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-DEVICES="${DEVICES:-1}"
+DEVICES="${DEVICES:-0,1}"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
 HYDRA_VISIBLE_DEVICES="'${DEVICES}'"
 GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
