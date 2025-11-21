@@ -7,6 +7,51 @@ from ragen.env.base import BaseLanguageBasedEnv
 from ragen.utils import all_seed
 from .config import StaticEnvConfig
 from .utils import REGISTERD_STATIC_ENV
+from huggingface_hub import HfApi
+import huggingface_hub
+import os
+import threading
+
+_DATASET_CACHE = {}
+_DATASET_LOCK = threading.Lock()
+
+def _freeze(x):
+    # Make nested dict/list hashable
+    if isinstance(x, dict):
+        return tuple(sorted((k, _freeze(v)) for k, v in x.items()))
+    if isinstance(x, (list, tuple)):
+        return tuple(_freeze(v) for v in x)
+    return x
+
+def fast_check_dataset_info(repo_id: str, token=None):
+    try:
+        api = HfApi()
+        api.dataset_info(repo_id, token=token)
+        return True
+    except huggingface_hub.utils.RepositoryNotFoundError:
+        return False
+    except huggingface_hub.utils.HfHubHTTPError as e:
+        print("[HF Permission Check Error]", e)
+        return False
+
+def get_shared_dataset(dataset_config, cache_dir, trust_remote_code=True, fast_check=True, token=None):
+
+    repo_id = dataset_config.get("path") or dataset_config.get("repo_id") or dataset_config.get("name")
+    
+    if fast_check:
+        if repo_id and not fast_check_dataset_info(repo_id, token=token):
+            raise RuntimeError(f"No HF access to dataset: {repo_id}")
+
+    key = (_freeze(dataset_config), cache_dir, trust_remote_code)
+    with _DATASET_LOCK:
+        if key not in _DATASET_CACHE:
+            _DATASET_CACHE[key] = load_dataset(
+                **dataset_config,
+                cache_dir=cache_dir,
+                trust_remote_code=trust_remote_code,
+            )
+        return _DATASET_CACHE[key]
+
 class StaticEnv(BaseLanguageBasedEnv):
     """
     A general environment for evaluating language models on Hugging Face datasets.
@@ -19,7 +64,9 @@ class StaticEnv(BaseLanguageBasedEnv):
         dataset_config=getattr(config, "dataset_config", None)
         if dataset_config is None:
             dataset_config=REGISTERD_STATIC_ENV[self.config.dataset_name]["config"]
-        self.dataset = load_dataset(**dataset_config, cache_dir=self.config.cache_dir, trust_remote_code=True)
+        
+        hf_token = os.environ.get("HUGGINGFACE_USER_KEY", None)
+        self.dataset = get_shared_dataset(dataset_config, self.config.cache_dir, True, True, hf_token)
         
         if self.config.split is None:
             self.split = list(self.dataset.keys())[0]
