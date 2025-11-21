@@ -131,7 +131,7 @@ custom_envs:
   MetamathQA:
     env_type: metamathqa
     max_actions_per_traj: 5
-    env_instruction: "You are solving Math problems. Please end your response with 'The answer is: <answer>'."
+    env_instruction: "You are solving Math problems."
     max_tokens: 1024
     env_config:
       gamma: 0.5
