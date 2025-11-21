@@ -45,6 +45,9 @@ TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU
 
 OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
 OUT_BASE="${OUT_BASE}/result/eval/r1w2_gamma"
+echo "OUT_BASE: ${OUT_BASE}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
+
 mkdir -p "${OUT_BASE}"
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
 

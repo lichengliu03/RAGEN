@@ -22,6 +22,7 @@ OUT_BASE="${OUT_BASE}/result/eval/r1w1"
 mkdir -p "${OUT_BASE}"
 
 echo "OUT_BASE: ${OUT_BASE}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
