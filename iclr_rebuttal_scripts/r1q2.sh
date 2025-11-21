@@ -17,14 +17,20 @@ cd "${REPO_DIR}"
 [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
 
+set +u
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
+set -u
 
 # ====== 配置 ======
 TRAIN_NQ=1
 # Eval scale
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
+PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
+
+read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
+DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
 
 VAL_TAGS="[MetamathQA]"
 repeat_value_list() {
@@ -47,8 +53,25 @@ OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
 OUT_BASE="${OUT_BASE}/result/eval/r1q2"
 echo "OUT_BASE: ${OUT_BASE}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
-
 mkdir -p "${OUT_BASE}"
+
+SUMMARY_CSV="${OUT_BASE}/summary.csv"
+if [[ ! -f "${SUMMARY_CSV}" ]]; then
+  header="model,turn,hours,total_correct,total_attempted,accuracy"
+  for ds in "${DATASET_NAMES[@]}"; do
+    header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
+  done
+  echo "${header}" > "${SUMMARY_CSV}"
+fi
+
+safe_append_csv() {
+  local row="$1" key="$2"
+  if ! grep -Fq -- "${key}" "${SUMMARY_CSV}"; then
+    echo "${row}" >> "${SUMMARY_CSV}"
+  else
+    echo "[R1Q2] Skip duplicate CSV row for key: ${key}"
+  fi
+}
 
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
@@ -62,6 +85,9 @@ summarize_accuracy() {
 import json
 from pathlib import Path
 from verl import DataProto
+
+dsets = json.loads('${DATASET_NAMES_JSON}')
+pass_key = "pass@${ES_VAL_GROUP_SIZE}"
 
 rollout_path = Path("${rollout_path}")
 if not rollout_path.exists():
@@ -82,6 +108,37 @@ def to_builtin(val):
 
 metrics = {k: to_builtin(v) for k, v in metrics.items()}
 
+def extract_metric(src, dataset, metric_name):
+    if isinstance(src, dict):
+        combined = f"{dataset}/{metric_name}"
+        if combined in src:
+            return src[combined]
+        ds_entry = src.get(dataset)
+        if isinstance(ds_entry, dict) and metric_name in ds_entry:
+            return ds_entry[metric_name]
+    return 0.0
+
+def to_float(val):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+flat_metrics = {}
+dataset_metrics = {}
+for dataset in dsets:
+    success = to_float(extract_metric(metrics, dataset, "success"))
+    pass_val = to_float(extract_metric(metrics, dataset, pass_key))
+    num_actions = to_float(extract_metric(metrics, dataset, "num_actions"))
+    flat_metrics[f"{dataset}/success"] = success
+    flat_metrics[f"{dataset}/{pass_key}"] = pass_val
+    flat_metrics[f"{dataset}/num_actions"] = num_actions
+    dataset_metrics[dataset] = {
+        "success": success,
+        pass_key: pass_val,
+        "num_actions": num_actions,
+    }
+
 total_correct = 0
 total_attempted = 0
 for idx in range(len(dp)):
@@ -97,7 +154,8 @@ print(json.dumps({
     "total_correct": total_correct,
     "total_attempted": total_attempted,
     "accuracy": acc,
-    "metrics": metrics
+    "metrics": flat_metrics,
+    "datasets": dataset_metrics
 }, ensure_ascii=False))
 PY
 }
@@ -115,8 +173,7 @@ run_continuous_and_eval() {
   ts="$(date +%Y%m%d_%H%M%S)"
   run_name="r1q2_cont_${model_safe}_turn${turn}_NQ${TRAIN_NQ}_${ts}"
   
-  # 计算 timeout (加上 30 分钟的启动/保存 buffer)
-  minutes="$(${PYTHON_BIN} -c "print(int(round(${max_hours}*60) + 30))")"
+  minutes="$(${PYTHON_BIN} -c "print(int(round(${max_hours}*60) + 10))")"
   timeout_spec="${minutes}m"
 
   echo "======================================================================="
@@ -257,6 +314,48 @@ PY
       summary_json="$(summarize_accuracy "${rollout_path}")"
       echo "[R1Q2] Summary (T=${h_key}h, turn=${turn}): ${summary_json}"
       echo "${summary_json}" > "${out_dir}/summary.json"
+      row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" MODEL_NAME="${model}" TURN_VAL="${turn}" HOURS_VAL="${h_key}" ${PYTHON_BIN} - <<'PY'
+import json
+import os
+
+def fmt(val):
+    try:
+        return f"{float(val)}"
+    except (TypeError, ValueError):
+        return str(val)
+
+summary = json.loads(os.environ["SUMMARY_JSON"])
+datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
+pass_key = os.environ["PASS_KEY"]
+metrics_flat = summary.get("metrics", {})
+datasets_metrics = summary.get("datasets", {})
+
+def pick(ds, metric_name):
+    ds_metrics = datasets_metrics.get(ds, {})
+    if metric_name in ds_metrics:
+        return ds_metrics[metric_name]
+    combined = f"{ds}/{metric_name}"
+    return metrics_flat.get(combined, 0.0)
+
+row = [
+    os.environ["MODEL_NAME"],
+    os.environ["TURN_VAL"],
+    os.environ["HOURS_VAL"],
+    fmt(summary.get("total_correct", 0.0)),
+    fmt(summary.get("total_attempted", 0.0)),
+    fmt(summary.get("accuracy", 0.0)),
+]
+
+for ds in datasets:
+    row.append(fmt(pick(ds, "success")))
+    row.append(fmt(pick(ds, pass_key)))
+    row.append(fmt(pick(ds, "num_actions")))
+
+print(",".join(row))
+PY
+)"
+      key="${model},${turn},${h_key},${run_name}"
+      safe_append_csv "${row}" "${key}"
     fi
   done
 }

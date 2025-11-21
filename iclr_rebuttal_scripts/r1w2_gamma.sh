@@ -18,8 +18,10 @@ cd "${REPO_DIR}"
 [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
 
+set +u
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
+set -u
 
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
@@ -42,6 +44,9 @@ make_repeat_list() {
 VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
 TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
 TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
+read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
+DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
+PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
 
 OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
 OUT_BASE="${OUT_BASE}/result/eval/r1w2_gamma"
@@ -54,7 +59,11 @@ SUMMARY_CSV="${OUT_BASE}/summary.csv"
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
-  echo "gamma,model,avg_reward,MetamathQA/success,MetamathQA/pass@${ES_VAL_GROUP_SIZE},MetamathQA/num_actions" > "${SUMMARY_CSV}"
+  header="gamma,model,avg_reward"
+  for ds in "${DATASET_NAMES[@]}"; do
+    header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
+  done
+  echo "${header}" > "${SUMMARY_CSV}"
 fi
 
 echo "[Gamma-Sens] Repo: ${REPO_DIR}"
@@ -68,29 +77,77 @@ summarize_run() {
   local gamma="$2"
   local model="$3"
   ${PYTHON_BIN} - <<PY
-import json, os, sys
+import json
 from pathlib import Path
-import torch
 from verl import DataProto
+
+dsets = json.loads('${DATASET_NAMES_JSON}')
+pass_key = "pass@${ES_VAL_GROUP_SIZE}"
 
 rollout_path = Path("${rollout_path}")
 dp = DataProto.load_from_disk(str(rollout_path))
 metrics = dp.meta_info.get("metrics", {})
-rm = dp.batch["rm_scores"]  # tensordict tensor [N, T]
+rm = dp.batch["rm_scores"]
 avg_reward = float(rm.sum(-1).mean().item())
 
-success = float(metrics.get("MetamathQA/success", 0.0))
-num_actions = float(metrics.get("MetamathQA/num_actions", 0.0))
-pass_key = f"MetamathQA/pass@${ES_VAL_GROUP_SIZE}"
-pass_at_k = float(metrics.get(pass_key, 0.0))
+def to_builtin(val):
+    if isinstance(val, (int, float, str, bool)) or val is None:
+        return val
+    if isinstance(val, dict):
+        return {k: to_builtin(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [to_builtin(v) for v in val]
+    if hasattr(val, "item"):
+        try:
+            return to_builtin(val.item())
+        except Exception:
+            return val
+    return val
+
+metrics = to_builtin(metrics)
+
+def extract_metric(src, dataset, metric_name):
+    if isinstance(src, dict):
+        combined = f"{dataset}/{metric_name}"
+        if combined in src:
+            return src[combined]
+        ds_entry = src.get(dataset)
+        if isinstance(ds_entry, dict) and metric_name in ds_entry:
+            return ds_entry[metric_name]
+    return 0.0
+
+def to_float(val):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+flat_metrics = {}
+dataset_metrics = {}
+for dataset in dsets:
+    success = to_float(extract_metric(metrics, dataset, "success"))
+    pass_val = to_float(extract_metric(metrics, dataset, pass_key))
+    num_actions = to_float(extract_metric(metrics, dataset, "num_actions"))
+    flat_metrics[f"{dataset}/success"] = success
+    flat_metrics[f"{dataset}/{pass_key}"] = pass_val
+    flat_metrics[f"{dataset}/num_actions"] = num_actions
+    dataset_metrics[dataset] = {
+        "success": success,
+        pass_key: pass_val,
+        "num_actions": num_actions,
+    }
+
+metamath = dataset_metrics.get("MetamathQA", {})
 
 print(json.dumps({
   "gamma": "${gamma}",
   "model": "${model}",
   "avg_reward": avg_reward,
-  "success": success,
-  "pass_at_k": pass_at_k,
-  "num_actions": num_actions
+  "success": metamath.get("success", 0.0),
+  "pass_at_k": metamath.get(pass_key, 0.0),
+  "num_actions": metamath.get("num_actions", 0.0),
+  "metrics": flat_metrics,
+  "datasets": dataset_metrics
 }, ensure_ascii=False))
 PY
 }
@@ -184,11 +241,43 @@ run_gamma() {
   if [[ -f "${rollout_path}" ]]; then
     summary_json="$(summarize_run "${rollout_path}" "${gamma}" "${model}")"
     echo "[Gamma-Sens] Summary: ${summary_json}"
-    avg_reward="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['avg_reward'])")"
-    success="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['success'])")"
-    pass_at_k="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['pass_at_k'])")"
-    num_actions="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['num_actions'])")"
-    row="${gamma},${model},${avg_reward},${success},${pass_at_k},${num_actions}"
+    row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" GAMMA_VAL="${gamma}" MODEL_NAME="${model}" ${PYTHON_BIN} - <<'PY'
+import json
+import os
+
+def fmt(val):
+    try:
+        return f"{float(val)}"
+    except (TypeError, ValueError):
+        return str(val)
+
+summary = json.loads(os.environ["SUMMARY_JSON"])
+datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
+pass_key = os.environ["PASS_KEY"]
+metrics_flat = summary.get("metrics", {})
+datasets_metrics = summary.get("datasets", {})
+
+def pick(ds, metric_name):
+    ds_metrics = datasets_metrics.get(ds, {})
+    if metric_name in ds_metrics:
+        return ds_metrics[metric_name]
+    combined = f"{ds}/{metric_name}"
+    return metrics_flat.get(combined, 0.0)
+
+row = [
+    os.environ["GAMMA_VAL"],
+    os.environ["MODEL_NAME"],
+    fmt(summary.get("avg_reward", 0.0)),
+]
+
+for ds in datasets:
+    row.append(fmt(pick(ds, "success")))
+    row.append(fmt(pick(ds, pass_key)))
+    row.append(fmt(pick(ds, "num_actions")))
+
+print(",".join(row))
+PY
+)"
     key="${gamma},${model},"
     safe_append_csv "${row}" "${key}"
     echo "${summary_json}" > "${out_dir}/summary.json"

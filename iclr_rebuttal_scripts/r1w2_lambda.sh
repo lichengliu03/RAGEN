@@ -18,8 +18,10 @@ cd "${REPO_DIR}"
 [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
 
+set +u
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
+set -u
 
 GAMMA="${GAMMA:-0.5}"
 
@@ -28,6 +30,10 @@ ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 MAX_TURN="${MAX_TURN:-5}"
 MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
+TRAIN_STEPS="${TRAIN_STEPS:-200}"
+read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
+DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
+PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
 
 # Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
 make_repeat_list() {
@@ -56,7 +62,12 @@ SUMMARY_CSV="${OUT_BASE}/summary.csv"
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
-  echo "lambda,model,gamma,avg_reward,MetamathQA/success,MetamathQA/pass@${ES_VAL_GROUP_SIZE},MetamathQA/num_actions,MetamathQA/rep_distinct_fraction,MetamathQA/rep_penalty" > "${SUMMARY_CSV}"
+  header="lambda,model,gamma,avg_reward"
+  for ds in "${DATASET_NAMES[@]}"; do
+    header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
+  done
+  header+=",MetamathQA/rep_distinct_fraction,MetamathQA/rep_penalty"
+  echo "${header}" > "${SUMMARY_CSV}"
 fi
 
 echo "[Lambda-Sens] Repo: ${REPO_DIR}"
@@ -76,34 +87,81 @@ import json
 from pathlib import Path
 from verl import DataProto
 
+dsets = json.loads('${DATASET_NAMES_JSON}')
+pass_key = "pass@${ES_VAL_GROUP_SIZE}"
+
 rollout_path = Path("${rollout_path}")
 dp = DataProto.load_from_disk(str(rollout_path))
 metrics = dp.meta_info.get("metrics", {})
 rm = dp.batch["rm_scores"]
 avg_reward = float(rm.sum(-1).mean().item())
 
-def getm(k, default=0.0):
-    try:
-        return float(metrics.get(k, default))
-    except Exception:
-        return float(default)
+def to_builtin(val):
+    if isinstance(val, (int, float, str, bool)) or val is None:
+        return val
+    if isinstance(val, dict):
+        return {k: to_builtin(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [to_builtin(v) for v in val]
+    if hasattr(val, "item"):
+        try:
+            return to_builtin(val.item())
+        except Exception:
+            return val
+    return val
 
-success = getm("MetamathQA/success")
-num_actions = getm("MetamathQA/num_actions")
-pass_at_k = getm(f"MetamathQA/pass@${ES_VAL_GROUP_SIZE}")
-rep_df = getm("MetamathQA/rep_distinct_fraction")
-rep_pen = getm("MetamathQA/rep_penalty")
+metrics = to_builtin(metrics)
+
+def extract_metric(src, dataset, metric_name):
+    if isinstance(src, dict):
+        combined = f"{dataset}/{metric_name}"
+        if combined in src:
+            return src[combined]
+        ds_entry = src.get(dataset)
+        if isinstance(ds_entry, dict) and metric_name in ds_entry:
+            return ds_entry[metric_name]
+    return 0.0
+
+def to_float(val):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+flat_metrics = {}
+dataset_metrics = {}
+for dataset in dsets:
+    success = to_float(extract_metric(metrics, dataset, "success"))
+    pass_val = to_float(extract_metric(metrics, dataset, pass_key))
+    num_actions = to_float(extract_metric(metrics, dataset, "num_actions"))
+    flat_metrics[f"{dataset}/success"] = success
+    flat_metrics[f"{dataset}/{pass_key}"] = pass_val
+    flat_metrics[f"{dataset}/num_actions"] = num_actions
+    dataset_metrics[dataset] = {
+        "success": success,
+        pass_key: pass_val,
+        "num_actions": num_actions,
+    }
+
+rep_df = to_float(extract_metric(metrics, "MetamathQA", "rep_distinct_fraction"))
+rep_pen = to_float(extract_metric(metrics, "MetamathQA", "rep_penalty"))
+flat_metrics["MetamathQA/rep_distinct_fraction"] = rep_df
+flat_metrics["MetamathQA/rep_penalty"] = rep_pen
+
+metamath = dataset_metrics.get("MetamathQA", {})
 
 print(json.dumps({
   "lambda": "${lambda_val}",
   "gamma": "${gamma}",
   "model": "${model}",
   "avg_reward": avg_reward,
-  "success": success,
-  "pass_at_k": pass_at_k,
-  "num_actions": num_actions,
+  "success": metamath.get("success", 0.0),
+  "pass_at_k": metamath.get(pass_key, 0.0),
+  "num_actions": metamath.get("num_actions", 0.0),
   "rep_distinct_fraction": rep_df,
-  "rep_penalty": rep_pen
+  "rep_penalty": rep_pen,
+  "metrics": flat_metrics,
+  "datasets": dataset_metrics
 }, ensure_ascii=False))
 PY
 }
@@ -129,7 +187,7 @@ run_lambda() {
 
   local ts run_name eval_name
   ts="$(date +%Y%m%d_%H%M%S)"
-  run_name="r1w2_lambda_${model_safe}_l${lambda_val}_g${GAMMA}_${ts}"
+  run_name="r1w2_lambda_${model_safe}_l${lambda_val}_g${GAMMA}_s${TRAIN_STEPS}_${ts}"
   eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
 
   if [[ -f "${rollout_path}" ]]; then
@@ -151,6 +209,7 @@ run_lambda() {
       es_manager.val.env_configs.tags=[MetamathQA] \
       custom_envs.MetamathQA.env_config.gamma=${GAMMA} \
       custom_envs.MetamathQA.env_config.lambda_rep=${lambda_val} \
+      trainer.total_training_steps=${TRAIN_STEPS} \
       actor_rollout_ref.actor.checkpoint.save_contents=[hf_model]
 
     # Parse latest HF weights directory (find the latest training under default checkpoints)
@@ -199,13 +258,47 @@ run_lambda() {
   if [[ -f "${rollout_path}" ]]; then
     summary_json="$(summarize_run "${rollout_path}" "${lambda_val}" "${GAMMA}" "${model}")"
     echo "[Lambda-Sens] Summary: ${summary_json}"
-    avg_reward="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['avg_reward'])")"
-    success="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['success'])")"
-    pass_at_k="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['pass_at_k'])")"
-    num_actions="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['num_actions'])")"
-    rep_df="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['rep_distinct_fraction'])")"
-    rep_pen="$(echo "${summary_json}" | ${PYTHON_BIN} -c "import sys,json;print(json.load(sys.stdin)['rep_penalty'])")"
-    row="${lambda_val},${model},${GAMMA},${avg_reward},${success},${pass_at_k},${num_actions},${rep_df},${rep_pen}"
+    row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" LAMBDA_VAL="${lambda_val}" MODEL_NAME="${model}" GAMMA_VAL="${GAMMA}" ${PYTHON_BIN} - <<'PY'
+import json
+import os
+
+def fmt(val):
+    try:
+        return f"{float(val)}"
+    except (TypeError, ValueError):
+        return str(val)
+
+summary = json.loads(os.environ["SUMMARY_JSON"])
+datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
+pass_key = os.environ["PASS_KEY"]
+metrics_flat = summary.get("metrics", {})
+datasets_metrics = summary.get("datasets", {})
+
+def pick(ds, metric_name):
+    ds_metrics = datasets_metrics.get(ds, {})
+    if metric_name in ds_metrics:
+        return ds_metrics[metric_name]
+    combined = f"{ds}/{metric_name}"
+    return metrics_flat.get(combined, 0.0)
+
+row = [
+    os.environ["LAMBDA_VAL"],
+    os.environ["MODEL_NAME"],
+    os.environ["GAMMA_VAL"],
+    fmt(summary.get("avg_reward", 0.0)),
+]
+
+for ds in datasets:
+    row.append(fmt(pick(ds, "success")))
+    row.append(fmt(pick(ds, pass_key)))
+    row.append(fmt(pick(ds, "num_actions")))
+
+row.append(fmt(metrics_flat.get("MetamathQA/rep_distinct_fraction", summary.get("rep_distinct_fraction", 0.0))))
+row.append(fmt(metrics_flat.get("MetamathQA/rep_penalty", summary.get("rep_penalty", 0.0))))
+
+print(",".join(row))
+PY
+)"
     key="${lambda_val},${model},${GAMMA},"
     safe_append_csv "${row}" "${key}"
     echo "${summary_json}" > "${out_dir}/summary.json"

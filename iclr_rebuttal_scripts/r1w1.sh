@@ -24,10 +24,28 @@ mkdir -p "${OUT_BASE}"
 echo "OUT_BASE: ${OUT_BASE}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 
+SUMMARY_CSV="${OUT_BASE}/summary.csv"
+if [[ ! -f "${SUMMARY_CSV}" ]]; then
+  header="model,avg_reward"
+  for ds in "${DATASET_NAMES[@]}"; do
+    header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
+  done
+  echo "${header}" > "${SUMMARY_CSV}"
+fi
+
+safe_append_csv() {
+  local row="$1" key="$2"
+  if ! grep -Fq -- "${key}" "${SUMMARY_CSV}"; then
+    echo "${row}" >> "${SUMMARY_CSV}"
+  else
+    echo "[Eval] Skip duplicate CSV row for key: ${key}"
+  fi
+}
+
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 # Eval scale (can override via env)
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 # Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
@@ -45,8 +63,9 @@ make_repeat_list() {
 VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
 TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
 TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
-SUMMARY_DATASETS="MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro"
-SUMMARY_KEYS="success,pass@1,num_actions"
+PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
+read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
+DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
 
 echo "[Eval] Repo: ${REPO_DIR}"
 echo "[Eval] Output base: ${OUT_BASE}"
@@ -68,6 +87,7 @@ run_eval_for_model() {
   local ts run_name
   ts="$(date +%Y%m%d_%H%M%S)"
   run_name="r1w1_${model_safe}_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}_${ts}"
+  LAST_RUN_NAME="${run_name}"
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
   ENABLE_GPT_FEEDBACK=1 \
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
@@ -112,31 +132,123 @@ summarize_metrics_for_model() {
     return 1
   fi
 
-  ROLLOUT_PATH="${rollout_path}" SUMMARY_PATH="${summary_path}" \
-  SUMMARY_DATASETS="${SUMMARY_DATASETS}" SUMMARY_KEYS="${SUMMARY_KEYS}" \
-  ${PYTHON_BIN} - <<'PY'
-import json, os
+  local summary_json
+  summary_json="$(${PYTHON_BIN} - <<PY
+import json
 from pathlib import Path
 from verl import DataProto
 
-rollout_path = Path(os.environ["ROLLOUT_PATH"])
-summary_path = Path(os.environ["SUMMARY_PATH"])
-datasets = [name.strip() for name in os.environ.get("SUMMARY_DATASETS", "").split(",") if name.strip()]
-keys = [name.strip() for name in os.environ.get("SUMMARY_KEYS", "").split(",") if name.strip()]
+datasets = json.loads('${DATASET_NAMES_JSON}')
+pass_key = "pass@${ES_VAL_GROUP_SIZE}"
 
-metrics = DataProto.load_from_disk(str(rollout_path)).meta_info.get("metrics", {})
-summary = {}
+rollout_path = Path("${rollout_path}")
+dp = DataProto.load_from_disk(str(rollout_path))
+metrics = dp.meta_info.get("metrics", {})
+rm = dp.batch.get("rm_scores")
+avg_reward = 0.0
+if rm is not None:
+    try:
+        avg_reward = float(rm.sum(-1).mean().item())
+    except Exception:
+        avg_reward = 0.0
+
+def to_builtin(val):
+    if isinstance(val, (int, float, str, bool)) or val is None:
+        return val
+    if isinstance(val, dict):
+        return {k: to_builtin(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [to_builtin(v) for v in val]
+    if hasattr(val, "item"):
+        try:
+            return to_builtin(val.item())
+        except Exception:
+            return val
+    return val
+
+metrics = to_builtin(metrics)
+
+def extract_metric(src, dataset, metric_name):
+    if isinstance(src, dict):
+        combined = f"{dataset}/{metric_name}"
+        if combined in src:
+            return src[combined]
+        ds_entry = src.get(dataset)
+        if isinstance(ds_entry, dict) and metric_name in ds_entry:
+            return ds_entry[metric_name]
+    return 0.0
+
+def to_float(val):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+flat_metrics = {}
+dataset_metrics = {}
 for dataset in datasets:
-    entry = {}
-    for key in keys:
-        metric_key = f"{dataset}/{key}"
-        value = metrics.get(metric_key)
-        entry[key] = float(value) if value is not None else None
-    summary[dataset] = entry
+    success = to_float(extract_metric(metrics, dataset, "success"))
+    pass_val = to_float(extract_metric(metrics, dataset, pass_key))
+    num_actions = to_float(extract_metric(metrics, dataset, "num_actions"))
+    flat_metrics[f"{dataset}/success"] = success
+    flat_metrics[f"{dataset}/{pass_key}"] = pass_val
+    flat_metrics[f"{dataset}/num_actions"] = num_actions
+    dataset_metrics[dataset] = {
+        "success": success,
+        pass_key: pass_val,
+        "num_actions": num_actions,
+    }
 
-summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
-print(f"[Summary] Wrote metrics to {summary_path}")
+print(json.dumps({
+    "model": "${model_path}",
+    "avg_reward": avg_reward,
+    "metrics": flat_metrics,
+    "datasets": dataset_metrics
+}, ensure_ascii=False))
 PY
+)"
+  echo "[Summary] ${summary_json}"
+  echo "${summary_json}" > "${summary_path}"
+
+  local row
+  row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" MODEL_NAME="${model_path}" ${PYTHON_BIN} - <<'PY'
+import json
+import os
+
+def fmt(val):
+    try:
+        return f"{float(val)}"
+    except (TypeError, ValueError):
+        return str(val)
+
+summary = json.loads(os.environ["SUMMARY_JSON"])
+datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
+pass_key = os.environ["PASS_KEY"]
+metrics_flat = summary.get("metrics", {})
+datasets_metrics = summary.get("datasets", {})
+
+def pick(ds, metric_name):
+    ds_metrics = datasets_metrics.get(ds, {})
+    if metric_name in ds_metrics:
+        return ds_metrics[metric_name]
+    combined = f"{ds}/{metric_name}"
+    return metrics_flat.get(combined, 0.0)
+
+row = [
+    os.environ["MODEL_NAME"],
+    fmt(summary.get("avg_reward", 0.0)),
+]
+
+for ds in datasets:
+    row.append(fmt(pick(ds, "success")))
+    row.append(fmt(pick(ds, pass_key)))
+    row.append(fmt(pick(ds, "num_actions")))
+
+print(",".join(row))
+PY
+)"
+  local key="${model_path},${LAST_RUN_NAME:-${model_safe}}"
+  safe_append_csv "${row}" "${key}"
 }
 
 cleanup_rollout_for_model() {

@@ -19,8 +19,10 @@ cd "${REPO_DIR}"
 [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]] && source "$HOME/miniconda3/etc/profile.d/conda.sh"
 [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]] && source "$HOME/anaconda3/etc/profile.d/conda.sh"
 
+set +u
 eval "$(conda shell.bash hook)"
 conda activate ragen || true
+set -u
 
 # ====== 模型与任务参数 ======
 # DEFAULT_MODEL="Qwen/Qwen2.5-3B-Instruct"
@@ -37,10 +39,15 @@ NQ="${NQ:-5}"
 MAX_TURN="${MAX_TURN:-5}"
 MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
 
+# 数据集配置
+read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
+DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
+
 # 评估标签与采样规模
 VAL_TAGS="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
 ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
+PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
 repeat_value_list() {
   local value="$1" repeat="$2"
   local output="[" index
@@ -59,6 +66,24 @@ TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
 OUT_BASE="${REPO_DIR}/result/eval/r1q1"
 mkdir -p "${OUT_BASE}"
 
+SUMMARY_CSV="${OUT_BASE}/summary.csv"
+if [[ ! -f "${SUMMARY_CSV}" ]]; then
+  header="model,NQ,total_correct,total_attempted,accuracy"
+  for ds in "${DATASET_NAMES[@]}"; do
+    header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
+  done
+  echo "${header}" > "${SUMMARY_CSV}"
+fi
+
+safe_append_csv() {
+  local row="$1" key="$2"
+  if ! grep -Fq -- "${key}" "${SUMMARY_CSV}"; then
+    echo "${row}" >> "${SUMMARY_CSV}"
+  else
+    echo "[R1Q1] Skip duplicate CSV row for key: ${key}"
+  fi
+}
+
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 echo "[R1Q1] Repo: ${REPO_DIR}"
@@ -72,6 +97,9 @@ summarize_accuracy() {
 import json
 from pathlib import Path
 from verl import DataProto
+
+dsets = json.loads('${DATASET_NAMES_JSON}')
+pass_key = "pass@${ES_VAL_GROUP_SIZE}"
 
 rollout_path = Path("${rollout_path}")
 dp = DataProto.load_from_disk(str(rollout_path))
@@ -93,6 +121,38 @@ def to_builtin(val):
 
 metrics = {k: to_builtin(v) for k, v in metrics.items()}
 
+# Extract per-dataset metrics
+def extract_metric(src, dataset, metric_name):
+    if isinstance(src, dict):
+        combined = f"{dataset}/{metric_name}"
+        if combined in src:
+            return src[combined]
+        ds_entry = src.get(dataset)
+        if isinstance(ds_entry, dict) and metric_name in ds_entry:
+            return ds_entry[metric_name]
+    return 0.0
+
+def to_float(val):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+flat_metrics = {}
+dataset_metrics = {}
+for dataset in dsets:
+    success = to_float(extract_metric(metrics, dataset, "success"))
+    pass_val = to_float(extract_metric(metrics, dataset, pass_key))
+    num_actions = to_float(extract_metric(metrics, dataset, "num_actions"))
+    flat_metrics[f"{dataset}/success"] = success
+    flat_metrics[f"{dataset}/{pass_key}"] = pass_val
+    flat_metrics[f"{dataset}/num_actions"] = num_actions
+    dataset_metrics[dataset] = {
+        "success": success,
+        pass_key: pass_val,
+        "num_actions": num_actions,
+    }
+
 # Aggregate episode_num_correct / episode_num_attempted from the last step info of each trajectory
 #
 # Note: if the data structure changes, this is best-effort; otherwise it returns empty stats
@@ -113,7 +173,8 @@ print(json.dumps({
     "total_correct": total_correct,
     "total_attempted": total_attempted,
     "accuracy": acc,
-    "metrics": metrics
+    "metrics": flat_metrics,
+    "datasets": dataset_metrics
 }, ensure_ascii=False))
 PY
 }
@@ -213,6 +274,47 @@ for model in "${MODELS[@]}"; do
     summary_json="$(summarize_accuracy "${rollout_path}")"
     echo "[R1Q1] Summary: ${summary_json}"
     echo "${summary_json}" > "${out_dir}/summary.json"
+    row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" MODEL_NAME="${model}" NQ_VAL="${NQ}" ${PYTHON_BIN} - <<'PY'
+import json
+import os
+
+def fmt(val):
+    try:
+        return f"{float(val)}"
+    except (TypeError, ValueError):
+        return str(val)
+
+summary = json.loads(os.environ["SUMMARY_JSON"])
+datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
+pass_key = os.environ["PASS_KEY"]
+metrics_flat = summary.get("metrics", {})
+datasets_metrics = summary.get("datasets", {})
+
+def pick(ds, metric_name):
+    ds_metrics = datasets_metrics.get(ds, {})
+    if metric_name in ds_metrics:
+        return ds_metrics[metric_name]
+    combined = f"{ds}/{metric_name}"
+    return metrics_flat.get(combined, 0.0)
+
+row = [
+    os.environ["MODEL_NAME"],
+    os.environ["NQ_VAL"],
+    fmt(summary.get("total_correct", 0.0)),
+    fmt(summary.get("total_attempted", 0.0)),
+    fmt(summary.get("accuracy", 0.0)),
+]
+
+for ds in datasets:
+    row.append(fmt(pick(ds, "success")))
+    row.append(fmt(pick(ds, pass_key)))
+    row.append(fmt(pick(ds, "num_actions")))
+
+print(",".join(row))
+PY
+)"
+    key="${model},${NQ},${run_name}"
+    safe_append_csv "${row}" "${key}"
   else
     echo "[R1Q1][WARN] Missing rollout at ${rollout_path}"
   fi
