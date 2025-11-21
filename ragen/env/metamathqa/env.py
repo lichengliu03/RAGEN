@@ -98,6 +98,7 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
                 done = True
             else:
                 observation = "Incorrect. Please think again."
+                done = False
             # If GPT feedback is enabled, override the default observation
             try:
                 from ragen.utils.gpt_feedback import get_fuzzy_feedback
@@ -116,7 +117,6 @@ class MetaMathQAEnv(BaseLanguageBasedEnv):
                 print(f"[ERROR] Failed to import gpt_feedback: {e}")
             except Exception as e:
                 print(f"[ERROR] Error getting GPT feedback: {e}")
-            done = False
             self.step_num += 1
             info = {
                 "action_is_valid": is_valid,
