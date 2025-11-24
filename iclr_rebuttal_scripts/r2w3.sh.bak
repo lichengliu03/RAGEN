@@ -10,7 +10,9 @@ HYDRA_CUDA_VISIBLE_DEVICES="'${DEVICES}'"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
 
 eval "$(conda shell.bash hook)"
+set +u
 conda activate ragen || true
+set -u
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -19,15 +21,14 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_DIR}"
 
 OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
-OUT_BASE="${OUT_BASE}/result/eval/r1w1"
+OUT_BASE="${OUT_BASE}/result/eval/r2w3"
 mkdir -p "${OUT_BASE}"
 
-echo "OUT_BASE: ${OUT_BASE}"
-echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
+WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
-  header="model,avg_reward"
+  header="model,turn,avg_reward"
   for ds in "${DATASET_NAMES[@]}"; do
     header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
   done
@@ -43,13 +44,11 @@ safe_append_csv() {
   fi
 }
 
-WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
-
 # Eval scale (can override via env)
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
-# Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
+# Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups
 make_repeat_list() {
   local val="$1" n="$2"
   local s="[" i
@@ -74,30 +73,30 @@ echo "[Eval] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WA
 
 run_eval_for_model() {
   local model_path="$1"
+  local turn="$2"
   local model_safe
   model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
-  local out_dir="${OUT_BASE}/${model_safe}"
+  # Append turn to output directory to separate results
+  local out_dir="${OUT_BASE}/${model_safe}/turn_${turn}"
   local rollout_path="${out_dir}/rollouts.pkl"
   mkdir -p "${out_dir}"
 
-  echo "[Eval] Running eval for model: ${model_path}"
+  echo "[Eval] Running eval for model: ${model_path}, turn: ${turn}"
   echo "[Eval] Output dir: ${out_dir}"
 
-  # Use the eval entry that does NOT train; override env to MetaMathQA
-  # Force single turn for MetaMathQA
   local ts run_name
   ts="$(date +%Y%m%d_%H%M%S)"
-  run_name="r1w1_${model_safe}_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}_${ts}"
+  run_name="r2w3_${model_safe}_turn${turn}_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}_${ts}"
   LAST_RUN_NAME="${run_name}"
+  
   WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
-  ENABLE_GPT_FEEDBACK=1 \
   ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
     trainer.experiment_name="${run_name}" \
     trainer.project_name="${WANDB_PROJECT}" \
     actor_rollout_ref.model.path="${model_path}" \
     system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
     es_manager.train.env_configs.tags=[MetamathQA] \
     es_manager.train.env_configs.n_groups=[1] \
     es_manager.train.env_groups=1 \
@@ -105,7 +104,7 @@ run_eval_for_model() {
     es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \
     es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
     es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
-    agent_proxy.max_turn=5 \
+    agent_proxy.max_turn=${turn} \
     output.dir="${out_dir}" \
     output.filename="rollouts.pkl" \
     output.append_timestamp=false \
@@ -122,9 +121,10 @@ run_eval_for_model() {
 
 summarize_metrics_for_model() {
   local model_path="$1"
+  local turn="$2"
   local model_safe
   model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
-  local out_dir="${OUT_BASE}/${model_safe}"
+  local out_dir="${OUT_BASE}/${model_safe}/turn_${turn}"
   local rollout_path="${out_dir}/rollouts.pkl"
   local summary_path="${out_dir}/summary.json"
 
@@ -202,6 +202,7 @@ for dataset in datasets:
 
 print(json.dumps({
     "model": "${model_path}",
+    "turn": "${turn}",
     "avg_reward": avg_reward,
     "metrics": flat_metrics,
     "datasets": dataset_metrics
@@ -212,7 +213,7 @@ PY
   echo "${summary_json}" > "${summary_path}"
 
   local row
-  row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" MODEL_NAME="${model_path}" ${PYTHON_BIN} - <<'PY'
+  row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" MODEL_NAME="${model_path}" TURN_VAL="${turn}" ${PYTHON_BIN} - <<'PY'
 import json
 import os
 
@@ -237,6 +238,7 @@ def pick(ds, metric_name):
 
 row = [
     os.environ["MODEL_NAME"],
+    os.environ["TURN_VAL"],
     fmt(summary.get("avg_reward", 0.0)),
 ]
 
@@ -248,147 +250,38 @@ for ds in datasets:
 print(",".join(row))
 PY
 )"
-  local key="${model_path},${LAST_RUN_NAME:-${model_safe}}"
+  local key="${model_path},${turn},${LAST_RUN_NAME:-${model_safe}}"
   safe_append_csv "${row}" "${key}"
-}
-
-cleanup_rollout_for_model() {
-  local model_path="$1"
-  local model_safe
-  model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
-  local out_dir="${OUT_BASE}/${model_safe}"
-  local rollout_path="${out_dir}/rollouts.pkl"
-
-  if [[ -f "${rollout_path}" ]]; then
-    rm -f "${rollout_path}"
-    echo "[Cleanup] Removed rollout: ${rollout_path}"
-  fi
-}
-
-generate_fuzzy_feedback() {
-  local model_path="$1"
-  local model_safe
-  model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
-  local out_dir="${OUT_BASE}/${model_safe}"
-  local rollout_path="${out_dir}/rollouts.pkl"
-  local feedback_path="${out_dir}/feedback_gpt4o.jsonl"
-
-  if [[ ! -f "${rollout_path}" ]]; then
-    echo "[Feedback] Rollout not found: ${rollout_path}"
-    return 1
-  fi
-  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-    echo "[Feedback] OPENAI_API_KEY not set. Skipping feedback for ${model_path}."
-    return 0
-  fi
-
-  if [[ -f "${feedback_path}" ]]; then
-    echo "[Feedback] Skip existing: ${feedback_path}"
-    return 0
-  fi
-
-  echo "[Feedback] Generating fuzzy feedback with gpt-4o for: ${model_path}"
-  echo "[Feedback] Output: ${feedback_path}"
-
-  ${PYTHON_BIN} - <<'PY'
-import os, re, json
-from pathlib import Path
-from openai import OpenAI
-from verl import DataProto
-
-repo_dir = Path(os.environ.get("REPO_DIR", ".")).resolve()
-out_base = Path(os.environ.get("OUT_BASE", str(repo_dir / "result" / "eval" / "rebuttal"))).resolve()
-model_path = os.environ["MODEL_PATH"]
-model_safe = model_path.replace("/", "-")
-run_dir = out_base / model_safe
-rollout_path = run_dir / "rollouts.pkl"
-feedback_path = run_dir / "feedback_gpt4o.jsonl"
-
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-data = DataProto.load_from_disk(str(rollout_path))
-
-def extract_question(messages: list[str|dict]) -> str:
-    # messages[1]["content"] contains formatted turns; grab the first Turn's State
-    content = ""
-    for i, m in enumerate(messages):
-        if i == 1 and isinstance(m, dict) and m.get("role") == "user":
-            content = m.get("content", "")
-            break
-    if not content:
-        return ""
-    m = re.search(r"Turn 1:\s*State:\s*(.*?)(?:\nYou have|\Z)", content, flags=re.S)
-    return m.group(1).strip() if m else content.strip()
-
-def extract_student_answer(messages: list[str|dict]) -> str:
-    # last assistant message
-    assistants = [m for m in messages if isinstance(m, dict) and m.get("role") == "assistant"]
-    if not assistants:
-        return ""
-    text = assistants[-1].get("content", "") or ""
-    m = re.search(r"<answer>(.*?)</answer>", text, flags=re.S | re.I)
-    return (m.group(1).strip() if m else text.strip())
-
-with open(feedback_path, "w", encoding="utf-8") as fw:
-    for idx in range(len(data)):
-        item = data[idx]
-        messages = item.non_tensor_batch.get("messages_list", [])
-        # messages could be numpy array; ensure list of dicts
-        if hasattr(messages, "tolist"):
-            messages = messages.tolist()
-        question = extract_question(messages)
-        student_answer = extract_student_answer(messages)
-        if not question and not student_answer:
-            continue
-
-        sys_prompt = "You are a strict but friendly math TA. Imitate a real human and provide ambiguous or even slightly inconsistent feedback that nudges directionally, without revealing the final answer or any specific numbers. Use 2-3 sentences."
-        user_prompt = f"Problem:\n{question}\n\nStudent answer:\n{student_answer}\n\nPlease provide ambiguous, non-revealing feedback (no final answer, no specific numbers)."
-        resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.5,
-            max_tokens=180,
-        )
-        feedback = resp.choices[0].message.content
-        rec = {
-            "index": idx,
-            "question": question,
-            "student_answer": student_answer,
-            "fuzzy_feedback": feedback,
-            "model": model_path,
-        }
-        fw.write(json.dumps(rec, ensure_ascii=False) + "\n")
-print(f"[Feedback] Done: {feedback_path}")
-PY
 }
 
 run_model_pipeline() {
   local model_path="$1"
+  local turn="$2"
   local model_safe
   model_safe="$(echo "${model_path}" | sed 's|/|-|g')"
-  local summary_path="${OUT_BASE}/${model_safe}/summary.json"
+  local summary_path="${OUT_BASE}/${model_safe}/turn_${turn}/summary.json"
 
   if [[ -f "${summary_path}" ]]; then
     echo "[Eval] Summary exists, skip pipeline: ${summary_path}"
     return 0
   fi
 
-  echo "[Eval] ===== Model: ${model_path} ====="
-  run_eval_for_model "${model_path}"
-  summarize_metrics_for_model "${model_path}"
-  # MODEL_PATH="${model_path}" generate_fuzzy_feedback "${model_path}"
-  # cleanup_rollout_for_model "${model_path}"
-  echo "[Eval] ===== Done: ${model_path} ====="
+  echo "[Eval] ===== Model: ${model_path}, Turn: ${turn} ====="
+  run_eval_for_model "${model_path}" "${turn}"
+  summarize_metrics_for_model "${model_path}" "${turn}"
+  echo "[Eval] ===== Done: ${model_path}, Turn: ${turn} ====="
   echo
 }
 
-# Export REPO_DIR for the Python snippet
 export REPO_DIR="${REPO_DIR}"
 export OUT_BASE="${OUT_BASE}"
 
-run_model_pipeline "LichengLiu03/Qwen2.5-3B-UFO"
-run_model_pipeline "LichengLiu03/Qwen2.5-3B-UFO-1turn"
+# Run 6 experiments for Qwen2.5-3B-Instruct base model with different max turns
+run_model_pipeline "Qwen/Qwen2.5-3B-Instruct" "1"
+run_model_pipeline "Qwen/Qwen2.5-3B-Instruct" "2"
+run_model_pipeline "Qwen/Qwen2.5-3B-Instruct" "4"
+run_model_pipeline "Qwen/Qwen2.5-3B-Instruct" "6"
+run_model_pipeline "Qwen/Qwen2.5-3B-Instruct" "8"
+run_model_pipeline "Qwen/Qwen2.5-3B-Instruct" "10"
 
 echo "[All Done] Results under: ${OUT_BASE}"

@@ -187,7 +187,7 @@ run_train_and_eval() {
     system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.total_training_steps=${train_steps} \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
     agent_proxy.max_turn=${turn} \
     es_manager.train.env_configs.tags=[HotpotQA] \
     es_manager.val.env_configs.tags=[HotpotQA] \
@@ -248,7 +248,7 @@ PY
       enable_response_mask=False \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[HotpotQA] \
       es_manager.val.env_configs.tags=${VAL_TAGS} \
       es_manager.val.env_configs.n_groups=${VAL_NGROUPS_LIST} \

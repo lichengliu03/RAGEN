@@ -24,25 +24,21 @@ eval "$(conda shell.bash hook)"
 conda activate ragen || true
 set -u
 
-GAMMA="${GAMMA:-0.5}"
-
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
-MAX_TURN="${MAX_TURN:-5}"
-MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
-TRAIN_STEPS="${TRAIN_STEPS:-200}"
-read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
-DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
-PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
+TURN_VALUES="${TURN_VALUES:-1,5}"
+IFS=',' read -r -a TURNS <<< "${TURN_VALUES}"
 
-# Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
+TRAIN_STEPS="${TRAIN_STEPS:-1}"
+
+MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
+
 make_repeat_list() {
   local val="$1" n="$2"
   local s="[" i
   for ((i=0; i<n; i++)); do
-    if (( i > 0 )); then s+=","
-    fi
+    if (( i > 0 )); then s+=","; fi
     s+="${val}"
   done
   s+="]"
@@ -51,44 +47,40 @@ make_repeat_list() {
 VAL_NGROUPS_LIST="$(make_repeat_list "${ES_VAL_GROUPS}" 9)"
 TOTAL_VAL_GROUPS="$(( ES_VAL_GROUPS * 9 ))"
 TAGS_LIST="[MetamathQA,TheoremQA,GSM8k,GPQA,MMLU-STEM,HotpotQA,ConcurrentQA,MMLU,MMLUPro]"
+read -r -a DATASET_NAMES <<< "MetamathQA TheoremQA GSM8k GPQA MMLU-STEM HotpotQA ConcurrentQA MMLU MMLUPro"
+DATASET_NAMES_JSON='["MetamathQA","TheoremQA","GSM8k","GPQA","MMLU-STEM","HotpotQA","ConcurrentQA","MMLU","MMLUPro"]'
+PASS_KEY="pass@${ES_VAL_GROUP_SIZE}"
 
 OUT_BASE="${OUT_BASE:-${REPO_DIR}}"
-OUT_BASE="${OUT_BASE}/result/eval/r1w2_lambda"
-echo "OUT_BASE: ${OUT_BASE}"
-echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
-
+OUT_BASE="${OUT_BASE}/result/eval/r2w7"
 mkdir -p "${OUT_BASE}"
 SUMMARY_CSV="${OUT_BASE}/summary.csv"
 
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
-  header="lambda,model,gamma,avg_reward"
+  header="algo,turn,model,avg_reward"
   for ds in "${DATASET_NAMES[@]}"; do
     header+=",${ds}/success,${ds}/${PASS_KEY},${ds}/num_actions"
   done
-  header+=",MetamathQA/rep_distinct_fraction,MetamathQA/rep_penalty"
   echo "${header}" > "${SUMMARY_CSV}"
 fi
 
-echo "[Lambda-Sens] Repo: ${REPO_DIR}"
-echo "[Lambda-Sens] Output base: ${OUT_BASE}"
-echo "[Lambda-Sens] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
-echo "[Lambda-Sens] MAX_TURN=${MAX_TURN}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
-echo "[Lambda-Sens] GAMMA=${GAMMA}"
-echo "[Lambda-Sens] This script will run 3 experiments (1 model x 3 lambdas)."
+echo "[R2W7] Repo: ${REPO_DIR}"
+echo "[R2W7] Output base: ${OUT_BASE}"
+echo "[R2W7] Eval groups: ${ES_VAL_GROUPS}, group_size: ${ES_VAL_GROUP_SIZE}, WANDB_PROJECT=${WANDB_PROJECT}"
+echo "[R2W7] Turns: ${TURN_VALUES}, TRAIN_STEPS=${TRAIN_STEPS}, MAX_ACTIONS_PER_TRAJ=${MAX_ACTIONS_PER_TRAJ}"
 
 summarize_run() {
   local rollout_path="$1"
-  local lambda_val="$2"
-  local gamma="$3"
-  local model="$4"
+  local turn="$2"
+  local model="$3"
   ${PYTHON_BIN} - <<PY
 import json
 from pathlib import Path
 from verl import DataProto
 
-dsets = json.loads('${DATASET_NAMES_JSON}')
+datasets = json.loads('${DATASET_NAMES_JSON}')
 pass_key = "pass@${ES_VAL_GROUP_SIZE}"
 
 rollout_path = Path("${rollout_path}")
@@ -131,7 +123,7 @@ def to_float(val):
 
 flat_metrics = {}
 dataset_metrics = {}
-for dataset in dsets:
+for dataset in datasets:
     success = to_float(extract_metric(metrics, dataset, "success"))
     pass_val = to_float(extract_metric(metrics, dataset, pass_key))
     num_actions = to_float(extract_metric(metrics, dataset, "num_actions"))
@@ -144,23 +136,10 @@ for dataset in dsets:
         "num_actions": num_actions,
     }
 
-rep_df = to_float(extract_metric(metrics, "MetamathQA", "rep_distinct_fraction"))
-rep_pen = to_float(extract_metric(metrics, "MetamathQA", "rep_penalty"))
-flat_metrics["MetamathQA/rep_distinct_fraction"] = rep_df
-flat_metrics["MetamathQA/rep_penalty"] = rep_pen
-
-metamath = dataset_metrics.get("MetamathQA", {})
-
 print(json.dumps({
-  "lambda": "${lambda_val}",
-  "gamma": "${gamma}",
+  "turn": "${turn}",
   "model": "${model}",
   "avg_reward": avg_reward,
-  "success": metamath.get("success", 0.0),
-  "pass_at_k": metamath.get(pass_key, 0.0),
-  "num_actions": metamath.get("num_actions", 0.0),
-  "rep_distinct_fraction": rep_df,
-  "rep_penalty": rep_pen,
   "metrics": flat_metrics,
   "datasets": dataset_metrics
 }, ensure_ascii=False))
@@ -168,36 +147,55 @@ PY
 }
 
 safe_append_csv() {
-  # $1=row, $2=key (grep -F)
   local row="$1" key="$2"
   if ! grep -Fq -- "${key}" "${SUMMARY_CSV}"; then
     echo "${row}" >> "${SUMMARY_CSV}"
   else
-    echo "[Lambda-Sens] Skip duplicate CSV row for key: ${key}"
+    echo "[R2W7] Skip duplicate CSV row for key: ${key}"
   fi
 }
 
-run_lambda() {
+run_experiment() {
   local model="$1"
-  local lambda_val="$2"
-  local model_safe out_dir rollout_path
-  model_safe="$(echo "${model}" | sed 's|/|-|g')"
-  out_dir="${OUT_BASE}/${model_safe}/lambda_${lambda_val}_gamma_${GAMMA}"
-    mkdir -p "${out_dir}"
-  rollout_path="${out_dir}/rollouts.pkl"
+  local algo="$2"
+  local turn="$3"
+  local train_steps="${TRAIN_STEPS}"
+
+  local model_safe="$(echo "${model}" | sed 's|/|-|g')"
+  local out_dir="${OUT_BASE}/${model_safe}/${algo}/turn_${turn}"
+  mkdir -p "${out_dir}"
+  local rollout_path="${out_dir}/rollouts.pkl"
 
   local ts run_name eval_name
   ts="$(date +%Y%m%d_%H%M%S)"
-  run_name="r1w2_lambda_${model_safe}_l${lambda_val}_g${GAMMA}_s${TRAIN_STEPS}_${ts}"
+  run_name="r2w7_${algo}_${model_safe}_turn${turn}_steps${train_steps}_${ts}"
   eval_name="${run_name}_eval_g${ES_VAL_GROUPS}_k${ES_VAL_GROUP_SIZE}"
 
   if [[ -f "${rollout_path}" ]]; then
-    echo "[Lambda-Sens] Rollout exists, skip train/eval: model=${model}, lambda=${lambda_val}, gamma=${GAMMA}"
+    echo "[R2W7] Rollout exists, skip: algo=${algo}, turn=${turn}, model=${model}"
   else
-    # -------------------
-    # 1) Light training -> save HF weights
-    # -------------------
-    echo "[Lambda-Sens][Train] model=${model}, lambda=${lambda_val}, gamma=${GAMMA} (following base.yaml training settings)"
+    local algo_args=()
+    if [[ "${algo}" == "grpo" ]]; then
+      algo_args=(
+        "algorithm.adv_estimator=grpo"
+        "actor_rollout_ref.actor.use_kl_loss=True"
+        "actor_rollout_ref.actor.kl_loss_coef=0.001"
+        "algorithm.use_kl_in_reward=False"
+      )
+    elif [[ "${algo}" == "dapo" ]]; then
+      algo_args=(
+        "algorithm.adv_estimator=grpo"
+        "actor_rollout_ref.actor.use_kl_loss=False"
+        "algorithm.use_kl_in_reward=False"
+        "+algorithm.filter_groups.enable=True"
+        "+algorithm.filter_groups.metric=acc"
+      )
+    else
+      echo "[R2W7][Error] Unknown algorithm: ${algo}"
+      return 1
+    fi
+
+    echo "[R2W7][Train] algo=${algo}, turn=${turn}, steps=${train_steps}, model=${model}"
     WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${run_name}" WANDB_RUN_ID="${run_name}" \
     ${PYTHON_BIN} train.py \
       trainer.experiment_name="${run_name}" \
@@ -205,31 +203,27 @@ run_lambda() {
       model_path="${model}" \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
-      custom_envs.MetamathQA.env_config.gamma=${GAMMA} \
-      custom_envs.MetamathQA.env_config.lambda_rep=${lambda_val} \
-      trainer.total_training_steps=${TRAIN_STEPS} \
-      actor_rollout_ref.actor.checkpoint.save_contents=[hf_model]
+      agent_proxy.max_turn=${turn} \
+      trainer.total_training_steps=${train_steps} \
+      actor_rollout_ref.actor.checkpoint.save_contents=[hf_model] \
+      "${algo_args[@]}"
 
-    # Parse latest HF weights directory (find the latest training under default checkpoints)
-    LATEST_TRACKER="$(ls -t checkpoints/*/*/latest_checkpointed_iteration.txt 2>/dev/null | head -n1 || true)"
-    HF_DIR=""
+    local LATEST_TRACKER="$(ls -t checkpoints/*/*/latest_checkpointed_iteration.txt 2>/dev/null | head -n1 || true)"
+    local HF_DIR=""
     if [[ -n "${LATEST_TRACKER}" && -f "${LATEST_TRACKER}" ]]; then
-      CKPT_DIR="$(dirname "${LATEST_TRACKER}")"
-      last_step="$(tr -d '\n' < "${LATEST_TRACKER}")"
+      local CKPT_DIR="$(dirname "${LATEST_TRACKER}")"
+      local last_step="$(tr -d '\n' < "${LATEST_TRACKER}")"
       HF_DIR="${CKPT_DIR}/global_step_${last_step}/actor/huggingface"
     fi
     if [[ -z "${HF_DIR}" || ! -d "${HF_DIR}" ]]; then
-      echo "[Lambda-Sens][WARN] HF weights not found, falling back to original model: ${model}"
+      echo "[R2W7][WARN] HF weights not found, fallback to original model: ${model}"
       HF_DIR="${model}"
     fi
 
-    # -------------------
-    # 2) Evaluation
-    # -------------------
-    echo "[Lambda-Sens][Eval] model=${HF_DIR}, lambda=${lambda_val}, gamma=${GAMMA}"
+    echo "[R2W7][Eval] algo=${algo}, turn=${turn}, model=${HF_DIR}"
     WANDB_PROJECT="${WANDB_PROJECT}" WANDB_NAME="${eval_name}" WANDB_RUN_ID="${eval_name}" \
     ${PYTHON_BIN} -m ragen.llm_agent.agent_proxy --config-name eval \
       trainer.experiment_name="${eval_name}" \
@@ -237,7 +231,7 @@ run_lambda() {
       actor_rollout_ref.model.path="${HF_DIR}" \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \
       es_manager.train.env_groups=1 \
@@ -246,10 +240,8 @@ run_lambda() {
       es_manager.val.env_groups=${TOTAL_VAL_GROUPS} \
       es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
       custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
-      agent_proxy.max_turn=${MAX_TURN} \
+      agent_proxy.max_turn=${turn} \
       actor_rollout_ref.rollout.val_kwargs.do_sample=false \
-      custom_envs.MetamathQA.env_config.gamma=${GAMMA} \
-      custom_envs.MetamathQA.env_config.lambda_rep=${lambda_val} \
       output.dir="${out_dir}" \
       output.filename="rollouts.pkl" \
       output.append_timestamp=false \
@@ -257,11 +249,18 @@ run_lambda() {
   fi
 
   if [[ -f "${rollout_path}" ]]; then
-    summary_json="$(summarize_run "${rollout_path}" "${lambda_val}" "${GAMMA}" "${model}")"
-    echo "[Lambda-Sens] Summary: ${summary_json}"
-    row="$(SUMMARY_JSON="${summary_json}" DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" LAMBDA_VAL="${lambda_val}" MODEL_NAME="${model}" GAMMA_VAL="${GAMMA}" ${PYTHON_BIN} - <<'PY'
+    local summary_json
+    summary_json="$(summarize_run "${rollout_path}" "${turn}" "${model}")"
+    echo "[R2W7] Summary (algo=${algo}, turn=${turn}): ${summary_json}"
+    local row
+    row="$(DATASET_NAMES_JSON="${DATASET_NAMES_JSON}" PASS_KEY="${PASS_KEY}" ALGO="${algo}" TURN="${turn}" MODEL="${model}" SUMMARY_JSON="${summary_json}" ${PYTHON_BIN} - <<'PY'
 import json
 import os
+import sys
+
+summary = json.loads(os.environ["SUMMARY_JSON"])
+datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
+pass_key = os.environ["PASS_KEY"]
 
 def fmt(val):
     try:
@@ -269,47 +268,42 @@ def fmt(val):
     except (TypeError, ValueError):
         return str(val)
 
-summary = json.loads(os.environ["SUMMARY_JSON"])
-datasets = json.loads(os.environ["DATASET_NAMES_JSON"])
-pass_key = os.environ["PASS_KEY"]
-metrics_flat = summary.get("metrics", {})
-datasets_metrics = summary.get("datasets", {})
-
-def pick(ds, metric_name):
-    ds_metrics = datasets_metrics.get(ds, {})
-    if metric_name in ds_metrics:
-        return ds_metrics[metric_name]
-    combined = f"{ds}/{metric_name}"
-    return metrics_flat.get(combined, 0.0)
-
 row = [
-    os.environ["LAMBDA_VAL"],
-    os.environ["MODEL_NAME"],
-    os.environ["GAMMA_VAL"],
+    os.environ["ALGO"],
+    os.environ["TURN"],
+    os.environ["MODEL"],
     fmt(summary.get("avg_reward", 0.0)),
 ]
 
+datasets_metrics = summary.get("datasets", {})
+metrics_flat = summary.get("metrics", {})
 for ds in datasets:
-    row.append(fmt(pick(ds, "success")))
-    row.append(fmt(pick(ds, pass_key)))
-    row.append(fmt(pick(ds, "num_actions")))
-
-row.append(fmt(metrics_flat.get("MetamathQA/rep_distinct_fraction", summary.get("rep_distinct_fraction", 0.0))))
-row.append(fmt(metrics_flat.get("MetamathQA/rep_penalty", summary.get("rep_penalty", 0.0))))
+    ds_metrics = datasets_metrics.get(ds, {})
+    def pick(metric_name):
+        if metric_name in ds_metrics:
+            return ds_metrics[metric_name]
+        combined = f"{ds}/{metric_name}"
+        return metrics_flat.get(combined, 0.0)
+    row.append(fmt(pick("success")))
+    row.append(fmt(pick(pass_key)))
+    row.append(fmt(pick("num_actions")))
 
 print(",".join(row))
 PY
 )"
-    key="${lambda_val},${model},${GAMMA},"
+    local key="${algo},${turn},${model},"
     safe_append_csv "${row}" "${key}"
     echo "${summary_json}" > "${out_dir}/summary.json"
   else
-    echo "[Lambda-Sens][WARN] Missing rollout at ${rollout_path}"
+    echo "[R2W7][WARN] Missing rollout at ${rollout_path}"
   fi
 }
 
-run_lambda "Qwen/Qwen2.5-3B-Instruct" "0.0"
-run_lambda "Qwen/Qwen2.5-3B-Instruct" "1.0"
-run_lambda "Qwen/Qwen2.5-3B-Instruct" "2.0"
+MODEL="Qwen/Qwen2.5-3B-Instruct"
+run_experiment "${MODEL}" "grpo" "1"
+# run_experiment "${MODEL}" "grpo" "5"
+# run_experiment "${MODEL}" "dapo" "1"
+# run_experiment "${MODEL}" "dapo" "5"
 
 echo "[All Done] Summary CSV: ${SUMMARY_CSV}"
+

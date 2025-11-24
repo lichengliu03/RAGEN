@@ -205,7 +205,7 @@ run_lambda() {
       model_path="${model}" \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
       custom_envs.MetamathQA.env_config.gamma=${GAMMA} \
@@ -237,7 +237,7 @@ run_lambda() {
       actor_rollout_ref.model.path="${HF_DIR}" \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \
       es_manager.train.env_groups=1 \

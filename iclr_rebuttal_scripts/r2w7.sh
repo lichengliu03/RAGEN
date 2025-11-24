@@ -4,6 +4,7 @@ set -euo pipefail
 
 DEVICES="${DEVICES:-0,1}"
 GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
+TP_SIZE=$(python3 -c "print(max(4, int("${DEVICES}".count(",")+1)))")
 GPUS_PER_NODE=$((GPUS_PER_NODE))
 HYDRA_CUDA_VISIBLE_DEVICES="'${DEVICES}'"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
@@ -202,7 +203,7 @@ run_experiment() {
       model_path="${model}" \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.val.env_configs.tags=[MetamathQA] \
       agent_proxy.max_turn=${turn} \
@@ -230,7 +231,7 @@ run_experiment() {
       actor_rollout_ref.model.path="${HF_DIR}" \
       system.CUDA_VISIBLE_DEVICES=${HYDRA_CUDA_VISIBLE_DEVICES} \
       trainer.n_gpus_per_node=${GPUS_PER_NODE} \
-      actor_rollout_ref.rollout.tensor_model_parallel_size=${GPUS_PER_NODE} \
+      actor_rollout_ref.rollout.tensor_model_parallel_size=${TP_SIZE} \
       es_manager.train.env_configs.tags=[MetamathQA] \
       es_manager.train.env_configs.n_groups=[1] \
       es_manager.train.env_groups=1 \
