@@ -6,7 +6,7 @@ DEVICES="${DEVICES:-0,1}"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
 HYDRA_CUDA_VISIBLE_DEVICES="'${DEVICES}'"
 GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
-TP_SIZE=$(python3 -c "print(min(4, '${DEVICES}'.count( ,' ) + 1))")
+TP_SIZE=$(python3 -c "print(min(4, '${DEVICES}'.count(',') + 1))")
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 

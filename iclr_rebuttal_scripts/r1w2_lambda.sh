@@ -4,7 +4,7 @@ set -euo pipefail
 
 DEVICES="${DEVICES:-0,1}"
 GPUS_PER_NODE=$(echo "${DEVICES}" | tr ',' '\n' | wc -l)
-TP_SIZE=$(python3 -c "print(min(4, '${DEVICES}'.count( ,' ) + 1))")
+TP_SIZE=$(python3 -c "print(min(4, '${DEVICES}'.count(',') + 1))")
 GPUS_PER_NODE=$((GPUS_PER_NODE))
 HYDRA_CUDA_VISIBLE_DEVICES="'${DEVICES}'"
 export CUDA_VISIBLE_DEVICES="${DEVICES}"
