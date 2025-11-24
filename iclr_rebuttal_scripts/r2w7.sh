@@ -24,7 +24,7 @@ eval "$(conda shell.bash hook)"
 conda activate ragen || true
 set -u
 
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 TURN_VALUES="${TURN_VALUES:-1,5}"
@@ -301,9 +301,9 @@ PY
 
 MODEL="Qwen/Qwen2.5-3B-Instruct"
 run_experiment "${MODEL}" "grpo" "1"
-# run_experiment "${MODEL}" "grpo" "5"
-# run_experiment "${MODEL}" "dapo" "1"
-# run_experiment "${MODEL}" "dapo" "5"
+run_experiment "${MODEL}" "grpo" "5"
+run_experiment "${MODEL}" "dapo" "1"
+run_experiment "${MODEL}" "dapo" "5"
 
 echo "[All Done] Summary CSV: ${SUMMARY_CSV}"
 
