@@ -30,7 +30,7 @@ ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 TURN_VALUES="${TURN_VALUES:-1,5}"
 IFS=',' read -r -a TURNS <<< "${TURN_VALUES}"
 
-TRAIN_STEPS="${TRAIN_STEPS:-200}"
+TRAIN_STEPS="${TRAIN_STEPS:-1}"
 
 MAX_ACTIONS_PER_TRAJ="${MAX_ACTIONS_PER_TRAJ:-5}"
 
@@ -189,6 +189,9 @@ run_experiment() {
         "algorithm.use_kl_in_reward=False"
         "+algorithm.filter_groups.enable=True"
         "+algorithm.filter_groups.metric=acc"
+        "actor_rollout_ref.actor.clip_ratio_low=0.2"
+        "actor_rollout_ref.actor.clip_ratio_high=0.28"
+        "actor_rollout_ref.actor.loss_agg_mode=token-mean"
       )
     else
       echo "[R2W7][Error] Unknown algorithm: ${algo}"
@@ -241,7 +244,7 @@ run_experiment() {
       es_manager.val.group_size=${ES_VAL_GROUP_SIZE} \
       custom_envs.MetamathQA.max_actions_per_traj=${MAX_ACTIONS_PER_TRAJ} \
       agent_proxy.max_turn=${turn} \
-      actor_rollout_ref.rollout.val_kwargs.do_sample=false \
+      actor_rollout_ref.rollout.val_kwargs.do_sample=true \
       output.dir="${out_dir}" \
       output.filename="rollouts.pkl" \
       output.append_timestamp=false \
