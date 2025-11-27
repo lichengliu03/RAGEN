@@ -46,7 +46,7 @@ safe_append_csv() {
 WANDB_PROJECT="${WANDB_PROJECT:-ufo_rebuttal}"
 
 # Eval scale (can override via env)
-ES_VAL_GROUPS="${ES_VAL_GROUPS:-8}"
+ES_VAL_GROUPS="${ES_VAL_GROUPS:-1024}"
 ES_VAL_GROUP_SIZE="${ES_VAL_GROUP_SIZE:-1}"
 
 # Make n_groups list for 9 tags, each having ES_VAL_GROUPS groups (i.e., 128 each by default)
