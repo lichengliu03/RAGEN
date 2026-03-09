@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import torch
 import faiss
 from flask import Flask, jsonify, request
 from sentence_transformers import SentenceTransformer
@@ -21,11 +22,19 @@ from sentence_transformers import SentenceTransformer
 class LocalRetriever:
     """Dense-only retrieval system using FAISS."""
 
-    def __init__(self, data_dir: str, device: str = "cpu"):
+    def __init__(self, data_dir: str, device: str = "cpu", gpu_memory_limit_mb: int = 6144):
         self.data_dir = Path(data_dir)
         self.corpus = []
         self.dense_index = None
         self._lock = threading.Lock()
+
+        if device.startswith("cuda"):
+            dev_idx = int(device.split(":")[-1]) if ":" in device else 0
+            fraction = gpu_memory_limit_mb / (torch.cuda.get_device_properties(dev_idx).total_memory / 1024**2)
+            fraction = min(fraction, 1.0)
+            torch.cuda.set_per_process_memory_fraction(fraction, dev_idx)
+            print(f"GPU memory limit: {gpu_memory_limit_mb}MB (fraction={fraction:.4f}) on cuda:{dev_idx}")
+
         self.encoder = SentenceTransformer("intfloat/e5-base-v2", device=device)
         print(f"E5 encoder loaded on device: {device}")
 
@@ -94,13 +103,14 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--device", default="cpu", help="Device for E5 encoder (cpu, cuda, cuda:0, etc.)")
+    parser.add_argument("--gpu_memory_limit_mb", type=int, default=1024, help="Max GPU memory in MB for E5 encoder (default: 1024)")
 
     args = parser.parse_args()
 
     # Initialize retriever
     global retriever
     try:
-        retriever = LocalRetriever(args.data_dir, device=args.device)
+        retriever = LocalRetriever(args.data_dir, device=args.device, gpu_memory_limit_mb=args.gpu_memory_limit_mb)
         print(f"Dense retrieval server initialized with {len(retriever.corpus)} documents")
     except Exception as e:
         print(f"Failed to initialize retriever: {e}")
